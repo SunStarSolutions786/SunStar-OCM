@@ -4,6 +4,7 @@
 ============================================================ */
 
 let empSelectedOutlet = null;
+let empOutletIsNew = false;
 let empBrandFilter = null;
 let empCart = {}; // itemId -> {itemName, brand, rate, qty, stockQty}
 let empActiveTab = 'order';
@@ -168,26 +169,44 @@ function renderEmpOrderTab(){
   const content = $('#empContent');
   const myOutlets = (APP.outlets||[]).filter(o=>o.salesmanName===APP.salesman);
 
-  if(myOutlets.length===0){
-    content.innerHTML = `<div class="empty-state"><div class="es-icon">🏬</div><h4>No outlets assigned</h4><p>Ask your admin to map outlets to your name in the Master.</p></div>`;
-    return;
-  }
-
   content.innerHTML = `
     <div class="card">
       <div class="field" style="margin-bottom:0;">
         <label>Outlet</label>
         <select class="input" id="empOutletSelect">
           <option value="">— Select Outlet —</option>
-          ${myOutlets.map(o=>`<option value="${escapeHtml(o.outletName)}" ${empSelectedOutlet===o.outletName?'selected':''}>${escapeHtml(o.outletName)}</option>`).join('')}
+          ${myOutlets.map(o=>`<option value="${escapeHtml(o.outletName)}" ${!empOutletIsNew && empSelectedOutlet===o.outletName?'selected':''}>${escapeHtml(o.outletName)}</option>`).join('')}
+          <option value="__other__" ${empOutletIsNew?'selected':''}>✏️ Other (outlet not listed)</option>
         </select>
       </div>
+      <div class="field hidden" id="empOtherOutletField" style="margin-top:10px;margin-bottom:0;">
+        <label>Type Outlet Name</label>
+        <input class="input" id="empOtherOutletInput" placeholder="Enter new outlet name" value="${empOutletIsNew?escapeHtml(empSelectedOutlet||''):''}">
+        <div class="helper-text">Your admin will verify this name and add it to the Master.</div>
+      </div>
     </div>
+    ${myOutlets.length===0 ? `<div class="helper-text" style="margin-top:8px;">No outlets are mapped to your name yet. You can still place an order by typing the outlet name above.</div>` : ''}
     <div id="empOrderBody"></div>
   `;
+  const otherField = $('#empOtherOutletField');
+  const otherInput = $('#empOtherOutletInput');
+  if(empOutletIsNew) otherField.classList.remove('hidden');
+
   $('#empOutletSelect').addEventListener('change', e=>{
-    empSelectedOutlet = e.target.value || null;
+    if(e.target.value==='__other__'){
+      empOutletIsNew = true;
+      otherField.classList.remove('hidden');
+      empSelectedOutlet = otherInput.value.trim() || null;
+    } else {
+      empOutletIsNew = false;
+      otherField.classList.add('hidden');
+      empSelectedOutlet = e.target.value || null;
+    }
     empCart = {}; empBrandFilter = null;
+    renderEmpOrderBody();
+  });
+  otherInput.addEventListener('input', ()=>{
+    empSelectedOutlet = otherInput.value.trim() || null;
     renderEmpOrderBody();
   });
   renderEmpOrderBody();
@@ -317,9 +336,12 @@ function submitOrder(){
       tx.update(refs[idx], {qty: curQty - items[idx].qty});
     });
     const total = items.reduce((s,i)=>s+i.qty*i.rate,0);
+    const matchedOutlet = (APP.outlets||[]).find(o=> o.outletName===empSelectedOutlet && o.salesmanName===APP.salesman);
     tx.set(orderRef, {
       date: todayStr(),
       outletName: empSelectedOutlet,
+      outletId: matchedOutlet ? matchedOutlet.id : null,
+      isNewOutlet: !matchedOutlet,
       salesmanName: APP.salesman,
       brand: empBrandFilter,
       items: items.map(i=>({itemId:i.itemId, itemName:i.itemName, orderedQty:i.qty, rate:i.rate, value:i.qty*i.rate, billedQty:0, remainingQty:i.qty})),
