@@ -129,29 +129,56 @@ function renderSACompanies(){
       <h2>All Companies</h2>
       <button class="btn btn-accent" id="addCompanyBtn">+ Add Company</button>
     </div>
+    <div class="card" style="margin-bottom:14px;">
+      <input class="input" id="companySearch" placeholder="Search by company name or ID...">
+    </div>
     <div id="companiesGrid" class="grid grid-3"></div>
   `;
   $('#addCompanyBtn').addEventListener('click', ()=> openCompanyModal(null));
+  $('#companySearch').addEventListener('input', ()=> renderCompaniesGrid());
 
   // detach previous listeners
   APP.unsub.forEach(u=>u());
   APP.unsub=[];
 
-  const grid = $('#companiesGrid');
   const unsub = DB.collection('companies').orderBy('createdAt','desc').onSnapshot(snap=>{
-    if(snap.empty){
-      grid.parentElement.querySelector('#companiesGrid').outerHTML = `
-        <div class="empty-state" style="grid-column:1/-1;">
-          <div class="es-icon">🏢</div>
-          <h4>No companies yet</h4>
-          <p>Click "Add Company" to onboard your first client.</p>
-        </div>`;
-      return;
-    }
-    grid.innerHTML='';
+    APP.allCompanies = [];
     snap.forEach(doc=>{
-      const c = doc.data();
-      c.id = doc.id;
+      const c = doc.data(); c.id = doc.id;
+      APP.allCompanies.push(c);
+    });
+    renderCompaniesGrid();
+  });
+  APP.unsub.push(unsub);
+}
+
+function renderCompaniesGrid(){
+  const grid = $('#companiesGrid');
+  if(!grid) return;
+  const search = norm($('#companySearch') ? $('#companySearch').value : '');
+  let list = APP.allCompanies || [];
+  if(search) list = list.filter(c=> norm(c.name).includes(search) || norm(c.id).includes(search));
+
+  if((APP.allCompanies||[]).length===0){
+    grid.innerHTML = `
+      <div class="empty-state" style="grid-column:1/-1;">
+        <div class="es-icon">🏢</div>
+        <h4>No companies yet</h4>
+        <p>Click "Add Company" to onboard your first client.</p>
+      </div>`;
+    return;
+  }
+  if(list.length===0){
+    grid.innerHTML = `
+      <div class="empty-state" style="grid-column:1/-1;">
+        <div class="es-icon">🔍</div>
+        <h4>No matching companies</h4>
+        <p>Try a different search term.</p>
+      </div>`;
+    return;
+  }
+  grid.innerHTML='';
+  list.forEach(c=>{
       const sub = getSubscriptionStatus(c);
       const card = el(`
         <div class="card">
@@ -176,8 +203,6 @@ function renderSACompanies(){
       card.querySelector('[data-links]').addEventListener('click', ()=> openLinksModal(c));
       grid.appendChild(card);
     });
-  });
-  APP.unsub.push(unsub);
 }
 
 /* ---------- Add / Edit Company Modal ---------- */
