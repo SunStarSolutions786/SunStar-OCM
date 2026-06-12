@@ -5,10 +5,10 @@
 
 const ADMIN_NAV = [
   {key:'dashboard', label:'Dashboard', icon:'📊'},
+  {key:'master', label:'Master', icon:'🗂️'},
   {key:'orders', label:'Orders', icon:'📦'},
   {key:'stock', label:'Stock', icon:'🗃️'},
   {key:'collection', label:'Outstanding & Collection', icon:'💰'},
-  {key:'master', label:'Master', icon:'🗂️'},
   {key:'reports', label:'Reports', icon:'📈'},
   {key:'subscription', label:'Subscription', icon:'⭐'}
 ];
@@ -380,6 +380,7 @@ function renderAdminStock(){
     <div class="section-header">
       <h2>Stock Management</h2>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-outline" id="manageBrandsBtn">🗂️ Manage Brands</button>
         <button class="btn btn-outline" id="importStockBtn">⬆ Import Stock</button>
         <button class="btn btn-accent" id="addItemBtn">+ Add Item</button>
       </div>
@@ -401,24 +402,94 @@ function renderAdminStock(){
       </div>
     </div>
   `;
-  $('#addItemBtn').addEventListener('click', ()=> openItemModal(null));
-  $('#importStockBtn').addEventListener('click', ()=> openStockImportModal());
+  $('#addItemBtn').addEventListener('click', ()=>{
+    if((APP.brands||[]).length===0){ showToast('Please create a brand folder first','error'); openManageBrandsModal(); return; }
+    openItemModal(null);
+  });
+  $('#importStockBtn').addEventListener('click', ()=>{
+    if((APP.brands||[]).length===0){ showToast('Please create a brand folder first','error'); openManageBrandsModal(); return; }
+    openStockImportModal();
+  });
+  $('#manageBrandsBtn').addEventListener('click', ()=> openManageBrandsModal());
   $('#stockSearch').addEventListener('input', renderStockTable);
 
-  const unsub = DB.collection('companies').doc(APP.companyId).collection('items')
+  const unsub1 = DB.collection('companies').doc(APP.companyId).collection('items')
     .orderBy('brand').onSnapshot(snap=>{
       APP.items = [];
       snap.forEach(d=> APP.items.push(Object.assign({id:d.id}, d.data())));
       renderBrandTabs();
       renderStockTable();
     });
-  APP.unsub.push(unsub);
+  const unsub2 = DB.collection('companies').doc(APP.companyId).collection('brands')
+    .orderBy('name').onSnapshot(snap=>{
+      APP.brands = [];
+      snap.forEach(d=> APP.brands.push(Object.assign({id:d.id}, d.data())));
+      renderBrandTabs();
+    });
+  APP.unsub.push(unsub1, unsub2);
+}
+
+function openManageBrandsModal(){
+  const renderList = ()=>{
+    const brands = APP.brands||[];
+    return brands.length ? brands.map(b=>`
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
+        <span><span class="badge badge-blue">${escapeHtml(b.name)}</span></span>
+        <button class="btn btn-danger btn-sm" data-delbrand="${b.id}">Delete</button>
+      </div>`).join('')
+      : `<p class="helper-text">No brand folders yet. Add one below.</p>`;
+  };
+  openModal(`
+    <h3>Manage Brand Folders</h3>
+    <div id="brandListWrap">${renderList()}</div>
+    <div class="divider"></div>
+    <div class="field">
+      <label>New Brand Name</label>
+      <input class="input" id="newBrandName" placeholder="e.g. Nokia, Infinix, Oppo">
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn btn-accent" id="addBrandBtn">+ Add Brand</button>
+      <button class="btn btn-outline" id="closeBrandsBtn">Close</button>
+    </div>
+  `);
+  $('#closeBrandsBtn').addEventListener('click', closeModal);
+  $('#addBrandBtn').addEventListener('click', ()=>{
+    const name = $('#newBrandName').value.trim();
+    if(!name){ showToast('Enter a brand name','error'); return; }
+    if((APP.brands||[]).some(b=> norm(b.name)===norm(name))){ showToast('This brand already exists','error'); return; }
+    DB.collection('companies').doc(APP.companyId).collection('brands').add({name}).then(()=>{
+      $('#newBrandName').value='';
+      showToast('Brand added','success');
+      setTimeout(()=>{ $('#brandListWrap').innerHTML = renderList(); bindBrandDelete(); }, 300);
+    });
+  });
+  bindBrandDelete();
+  function bindBrandDelete(){
+    $all('[data-delbrand]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const b = (APP.brands||[]).find(x=>x.id===btn.dataset.delbrand);
+        const itemCount = (APP.items||[]).filter(i=>i.brand===b.name).length;
+        const msg = itemCount>0
+          ? `"${b.name}" has ${itemCount} item(s) in stock. Deleting the folder will NOT delete those items, but they won't appear under any brand tab. Continue?`
+          : `Delete brand folder "${b.name}"?`;
+        if(confirm(msg)){
+          DB.collection('companies').doc(APP.companyId).collection('brands').doc(b.id).delete()
+            .then(()=>{ showToast('Brand deleted','success'); setTimeout(()=>{ $('#brandListWrap').innerHTML = renderList(); bindBrandDelete(); },300); });
+        }
+      });
+    });
+  }
 }
 
 function renderBrandTabs(){
-  const brands = [...new Set((APP.items||[]).map(i=>i.brand).filter(Boolean))].sort();
+  const brands = (APP.brands||[]).map(b=>b.name).sort();
   const tabsEl = $('#brandTabs');
   if(!tabsEl) return;
+  if(brands.length===0){
+    tabsEl.innerHTML = `<span class="helper-text">No brand folders yet — click "Manage Brands" to create one (e.g. Nokia, Infinix, Oppo, Vivo).</span>`;
+    currentBrandFilter='all';
+    return;
+  }
   tabsEl.innerHTML = `<button class="pill-tab ${currentBrandFilter==='all'?'active':''}" data-brand="all">All Brands</button>`
     + brands.map(b=>`<button class="pill-tab ${currentBrandFilter===b?'active':''}" data-brand="${escapeHtml(b)}">${escapeHtml(b)}</button>`).join('');
   tabsEl.querySelectorAll('[data-brand]').forEach(btn=>{
@@ -463,13 +534,14 @@ function renderStockTable(){
 
 function openItemModal(item){
   const isEdit = !!item;
-  const brands = [...new Set((APP.items||[]).map(i=>i.brand).filter(Boolean))].sort();
+  const brands = (APP.brands||[]).map(b=>b.name).sort();
   openModal(`
     <h3>${isEdit?'Edit Item':'Add Item'}</h3>
     <div class="field">
       <label>Brand</label>
-      <input class="input" id="iBrand" value="${isEdit?escapeHtml(item.brand||''):''}" placeholder="e.g. Nokia" list="brandSuggestions">
-      <datalist id="brandSuggestions">${brands.map(b=>`<option value="${escapeHtml(b)}">`).join('')}</datalist>
+      <select class="input" id="iBrand">
+        ${brands.map(b=>`<option value="${escapeHtml(b)}" ${isEdit && item.brand===b?'selected':''}>${escapeHtml(b)}</option>`).join('')}
+      </select>
     </div>
     <div class="field">
       <label>Item Name</label>
@@ -515,13 +587,14 @@ function openItemModal(item){
 }
 
 function openStockImportModal(){
-  const brands = [...new Set((APP.items||[]).map(i=>i.brand).filter(Boolean))].sort();
+  const brands = (APP.brands||[]).map(b=>b.name).sort();
   openModal(`
     <h3>Import Stock</h3>
     <div class="field">
       <label>Brand</label>
-      <input class="input" id="siBrand" placeholder="e.g. Nokia, Infinix, Oppo" list="brandSuggestions2">
-      <datalist id="brandSuggestions2">${brands.map(b=>`<option value="${escapeHtml(b)}">`).join('')}</datalist>
+      <select class="input" id="siBrand">
+        ${brands.map(b=>`<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('')}
+      </select>
       <div class="helper-text">All items in this file belong to this brand.</div>
     </div>
     <div class="field">
@@ -711,18 +784,24 @@ function renderOrdersTable(){
   tbody.innerHTML = list.map(o=>`
     <tr class="status-${o.status}">
       <td>${fmtDateDisplay(o.date)}</td>
-      <td><b>${escapeHtml(o.outletName)}</b></td>
+      <td><b>${escapeHtml(o.outletName)}</b> ${o.isNewOutlet?'<span class="badge badge-amber">New Outlet</span>':''}</td>
       <td>${escapeHtml(o.salesmanName)}</td>
       <td><span class="badge badge-blue">${escapeHtml(o.brand)}</span></td>
       <td>${o.items.length}</td>
       <td>${fmtINR(o.totalValue)}</td>
       <td><span class="badge badge-${o.status==='billed'?'green':o.status==='partial'?'blue':'amber'}">${o.status}</span></td>
-      <td><button class="btn btn-outline btn-sm" data-bill="${o.id}">${o.status==='billed'?'View':'Bill'}</button></td>
+      <td style="display:flex;gap:6px;">
+        <button class="btn btn-outline btn-sm" data-bill="${o.id}">${o.status==='billed'?'View':'Bill'}</button>
+        ${o.isNewOutlet?`<button class="btn btn-accent btn-sm" data-resolve="${o.id}">Resolve Outlet</button>`:''}
+      </td>
     </tr>
   `).join('');
 
   tbody.querySelectorAll('[data-bill]').forEach(b=>{
     b.addEventListener('click', ()=> openBillingModal(APP.orders.find(o=>o.id===b.dataset.bill)));
+  });
+  tbody.querySelectorAll('[data-resolve]').forEach(b=>{
+    b.addEventListener('click', ()=> openResolveOutletModal(APP.orders.find(o=>o.id===b.dataset.resolve)));
   });
 }
 
@@ -1256,6 +1335,8 @@ function renderAdminDashboard(){
 }
 
 async function loadDashboardData(){
+  $('#dashKpis').innerHTML = '<div class="spinner"></div>';
+  try{
   const {from, to} = getRangeDates(dashRange);
 
   // Orders in range
@@ -1330,6 +1411,14 @@ async function loadDashboardData(){
     {label:'Plan', data:collNames.map(s=>collMap[s].plan), color:'#e3a008'},
     {label:'Received', data:collNames.map(s=>collMap[s].received), color:'#2e9e5b'}
   ]);
+  } catch(err){
+    console.error('Dashboard load error:', err);
+    $('#dashKpis').innerHTML = `
+      <div class="empty-state" style="grid-column:1/-1;">
+        <div class="es-icon">⚠️</div><h4>Could not load dashboard data</h4>
+        <p>${escapeHtml(err.message)}</p>
+      </div>`;
+  }
 }
 
 function renderChart(canvasId, type, labels, datasets){
@@ -1370,6 +1459,10 @@ let repTo = todayStr();
 function renderAdminReports(){
   const content = $('#pageContent');
   content.innerHTML = `
+    <div class="section-header">
+      <h2>Reports</h2>
+      <button class="btn btn-accent" id="exportReportBtn">⬇ Export to Excel</button>
+    </div>
     <div class="pill-tabs" id="repRangeTabs">
       <button class="pill-tab" data-r="today">Today</button>
       <button class="pill-tab" data-r="week">This Week</button>
@@ -1415,10 +1508,12 @@ function renderAdminReports(){
   $('#repCustomGo').addEventListener('click', ()=>{
     repFrom=$('#repFromInput').value; repTo=$('#repToInput').value; loadReportsData();
   });
+  $('#exportReportBtn').addEventListener('click', exportReportsExcel);
   loadReportsData();
 }
 
 async function loadReportsData(){
+  try{
   const {from,to} = getRangeDates(repRange==='custom' ? 'custom' : repRange) ;
   const f = repRange==='custom' ? repFrom : from;
   const t = repRange==='custom' ? repTo : to;
@@ -1471,4 +1566,163 @@ async function loadReportsData(){
       <td>${fmtINR(it.value)}</td>
     </tr>`).join('');
   $('#repItemTbody').innerHTML = itemRows || `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">No data</td></tr>`;
+
+  // Store for Excel export
+  APP.repData = {
+    range: `${fmtDateDisplay(f)} to ${fmtDateDisplay(t)}`,
+    salesman: Object.entries(smMap).map(([sm,d])=>({salesman:sm, orders:d.orders||0, value:d.value||0, pending:d.pending||0, partial:d.partial||0, billed:d.billed||0, plan:d.plan||0, received:d.received||0})),
+    items: Object.values(itemMap).sort((a,b)=>b.value-a.value)
+  };
+  } catch(err){
+    console.error('Reports load error:', err);
+    $('#repSalesmanTbody').innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--red-600);">Error: ${escapeHtml(err.message)}</td></tr>`;
+    $('#repItemTbody').innerHTML = '';
+  }
+}
+
+/* ============================================================
+   EXCEL EXPORT — Reports (color-coded via HTML table -> .xls)
+============================================================ */
+function exportReportsExcel(){
+  const data = APP.repData;
+  if(!data){ showToast('Report data not ready yet','error'); return; }
+
+  const C = {
+    headerBg:'#1e2a4a', headerText:'#ffffff',
+    green:'#e3f7ec', amber:'#fef6db', blue:'#e6f1fb', red:'#fdeaea', gray:'#f6f7fb'
+  };
+  const th = (txt)=>`<th style="background:${C.headerBg};color:${C.headerText};padding:6px 10px;font-family:sans-serif;font-size:12px;border:1px solid #ccc;">${escapeHtml(txt)}</th>`;
+  const td = (txt, bg, align)=>`<td style="padding:6px 10px;font-family:sans-serif;font-size:12px;border:1px solid #ccc;${bg?`background:${bg};`:''}${align?`text-align:${align};`:''}">${txt}</td>`;
+
+  let html = `<html><head><meta charset="utf-8"></head><body>`;
+  html += `<h3 style="font-family:sans-serif;">${escapeHtml(APP.companyData.name)} — Report</h3>`;
+  html += `<p style="font-family:sans-serif;font-size:12px;color:#666;">Period: ${escapeHtml(data.range)}</p>`;
+
+  // Salesman-wise table
+  html += `<h4 style="font-family:sans-serif;">Salesman-wise Performance</h4>`;
+  html += `<table cellspacing="0">`;
+  html += `<tr>${th('Salesman')}${th('Orders')}${th('Order Value')}${th('Pending')}${th('Partial')}${th('Billed')}${th('Plan')}${th('Received')}${th('Collection %')}</tr>`;
+  data.salesman.forEach(r=>{
+    const collPct = r.plan>0 ? Math.round((r.received/r.plan)*100) : (r.received>0 ? 100 : 0);
+    const collBg = collPct>=100 ? C.green : (collPct>=50 ? C.amber : C.red);
+    html += `<tr>`
+      + td(escapeHtml(r.salesman))
+      + td(r.orders,null,'center')
+      + td(fmtINR(r.value),null,'right')
+      + td(r.pending, r.pending>0?C.amber:C.gray,'center')
+      + td(r.partial, r.partial>0?C.blue:C.gray,'center')
+      + td(r.billed, r.billed>0?C.green:C.gray,'center')
+      + td(fmtINR(r.plan),null,'right')
+      + td(fmtINR(r.received),null,'right')
+      + td(collPct+'%', collBg,'center')
+      + `</tr>`;
+  });
+  html += `</table><br>`;
+
+  // Item-wise table
+  html += `<h4 style="font-family:sans-serif;">Item-wise Sales</h4>`;
+  html += `<table cellspacing="0">`;
+  html += `<tr>${th('Item')}${th('Brand')}${th('Qty Ordered')}${th('Value')}</tr>`;
+  data.items.forEach(it=>{
+    html += `<tr>${td(escapeHtml(it.itemName))}${td(escapeHtml(it.brand),C.blue,'center')}${td(fmtNum(it.qty),null,'center')}${td(fmtINR(it.value),null,'right')}</tr>`;
+  });
+  html += `</table>`;
+  html += `</body></html>`;
+
+  const blob = new Blob([html], {type:'application/vnd.ms-excel'});
+  downloadBlob(blob, `SunStar-OCM-Report-${todayStr()}.xls`);
+  showToast('Report exported','success');
+}
+
+/* ============================================================
+   RESOLVE NEW OUTLET (from Employee manual entry)
+============================================================ */
+function openResolveOutletModal(order){
+  const similarOrders = (APP.orders||[]).filter(o=> o.isNewOutlet && o.outletName===order.outletName);
+  const outlets = (APP.outlets||[]).slice().sort((a,b)=>a.outletName.localeCompare(b.outletName));
+
+  openModal(`
+    <h3>Resolve Outlet</h3>
+    <p class="helper-text" style="margin-bottom:12px;">
+      Salesman <b>${escapeHtml(order.salesmanName)}</b> typed the outlet name:
+      <br><span class="badge badge-amber" style="margin-top:4px;">${escapeHtml(order.outletName)}</span>
+    </p>
+
+    <div class="pill-tabs" id="resolveModeTabs">
+      <button class="pill-tab active" data-mode="match">Match Existing Outlet</button>
+      <button class="pill-tab" data-mode="new">Add as New Outlet</button>
+    </div>
+
+    <div id="resolveMatchBlock">
+      <div class="field">
+        <label>Select Existing Outlet</label>
+        <select class="input" id="resolveOutletSelect">
+          <option value="">— Select —</option>
+          ${outlets.map(o=>`<option value="${o.id}">${escapeHtml(o.outletName)} (${escapeHtml(o.salesmanName||'—')})</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div id="resolveNewBlock" class="hidden">
+      <div class="field">
+        <label>Final Outlet Name</label>
+        <input class="input" id="resolveNewName" value="${escapeHtml(order.outletName)}">
+      </div>
+      <div class="field">
+        <label>Salesman</label>
+        <input class="input" id="resolveNewSalesman" value="${escapeHtml(order.salesmanName)}">
+      </div>
+    </div>
+
+    ${similarOrders.length>1 ? `
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;margin:10px 0;">
+      <input type="checkbox" id="resolveApplyAll" checked>
+      Apply to all ${similarOrders.length} orders with this same typed outlet name
+    </label>` : ''}
+
+    <div style="display:flex;gap:10px;margin-top:10px;">
+      <button class="btn btn-accent" id="resolveConfirmBtn">Save</button>
+      <button class="btn btn-outline" id="resolveCancelBtn">Cancel</button>
+    </div>
+  `);
+
+  $('#resolveCancelBtn').addEventListener('click', closeModal);
+
+  let resolveMode = 'match';
+  $all('#resolveModeTabs .pill-tab').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      resolveMode = b.dataset.mode;
+      $all('#resolveModeTabs .pill-tab').forEach(x=>x.classList.toggle('active', x===b));
+      $('#resolveMatchBlock').classList.toggle('hidden', resolveMode!=='match');
+      $('#resolveNewBlock').classList.toggle('hidden', resolveMode!=='new');
+    });
+  });
+
+  $('#resolveConfirmBtn').addEventListener('click', async ()=>{
+    const applyAll = similarOrders.length>1 && $('#resolveApplyAll') && $('#resolveApplyAll').checked;
+    const targetOrders = applyAll ? similarOrders : [order];
+    let chosen;
+
+    if(resolveMode==='match'){
+      const outletId = $('#resolveOutletSelect').value;
+      if(!outletId){ showToast('Please select an outlet','error'); return; }
+      chosen = outlets.find(o=>o.id===outletId);
+    } else {
+      const name = $('#resolveNewName').value.trim();
+      const sm = $('#resolveNewSalesman').value.trim();
+      if(!name){ showToast('Outlet name is required','error'); return; }
+      const ref = DB.collection('companies').doc(APP.companyId).collection('outlets');
+      const newRef = ref.doc();
+      await newRef.set({outletName:name, salesmanName:sm});
+      chosen = {id:newRef.id, outletName:name, salesmanName:sm};
+    }
+
+    const ordersRef = DB.collection('companies').doc(APP.companyId).collection('orders');
+    let batch = DB.batch();
+    targetOrders.forEach(o=>{
+      batch.update(ordersRef.doc(o.id), {outletName:chosen.outletName, outletId:chosen.id, isNewOutlet:false});
+    });
+    await batch.commit();
+    showToast('Outlet resolved','success');
+    closeModal();
+  });
 }
