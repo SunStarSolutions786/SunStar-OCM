@@ -151,16 +151,16 @@ a{ color:inherit; }
   display:flex; flex-direction:column;
 }
 .topbar{
-  height:64px; flex-shrink:0;
+  height:50px; flex-shrink:0;
   background:var(--surface); border-bottom:1px solid var(--border);
   display:flex; align-items:center; justify-content:space-between;
-  padding:0 24px; position:sticky; top:0; z-index:40;
+  padding:0 18px; position:sticky; top:0; z-index:40;
 }
-.topbar h1{ font-size:18px; font-weight:700; }
+.topbar h1{ font-size:16px; font-weight:700; }
 .topbar-right{ display:flex; align-items:center; gap:14px; }
 .menu-toggle{ display:none; background:none; border:none; font-size:22px; color:var(--indigo-800); }
 
-.content{ padding:22px; flex:1; }
+.content{ padding:16px; flex:1; }
 
 /* Mobile bottom nav (Employee view) */
 .bottom-nav{
@@ -200,23 +200,34 @@ a{ color:inherit; }
 .role-employee .content{ padding-bottom:78px; }
 
 /* ---------- Employee App Shell (native app feel) ---------- */
-.emp-shell{ min-height:100vh; background:var(--bg); display:flex; flex-direction:column; }
+.emp-shell{ min-height:100vh; background:linear-gradient(180deg,var(--indigo-100) 0%, var(--bg) 220px); display:flex; flex-direction:column; }
 .emp-topbar{
-  background:var(--indigo-800); color:#fff;
-  padding:calc(14px + env(safe-area-inset-top)) 16px 14px;
+  background:linear-gradient(135deg,var(--indigo-800) 0%, var(--indigo-700) 60%, var(--indigo-600) 100%);
+  color:#fff;
+  padding:calc(14px + env(safe-area-inset-top)) 16px 16px;
   position:sticky; top:0; z-index:40;
-  box-shadow:0 2px 10px rgba(20,29,51,0.15);
+  box-shadow:0 2px 12px rgba(20,29,51,0.2);
+  border-bottom:3px solid var(--marigold-500);
 }
 .emp-topbar .et-row{ display:flex; align-items:center; justify-content:space-between; }
 .emp-topbar .et-title{ font-family:var(--font-display); font-weight:700; font-size:16px; }
-.emp-topbar .et-sub{ font-size:11.5px; color:rgba(255,255,255,0.6); margin-top:2px; }
+.emp-topbar .et-sub{ font-size:11.5px; color:rgba(255,255,255,0.65); margin-top:2px; }
 .emp-topbar .et-avatar{
-  width:34px; height:34px; border-radius:50%; background:var(--marigold-500);
+  width:36px; height:36px; border-radius:50%; background:var(--marigold-500);
   display:flex; align-items:center; justify-content:center;
   font-family:var(--font-display); font-weight:800; color:var(--indigo-900); font-size:14px;
+  box-shadow:0 2px 6px rgba(0,0,0,0.25);
 }
 .emp-content{ flex:1; padding:14px; padding-bottom:84px; max-width:560px; margin:0 auto; width:100%; }
 .emp-shell .bottom-nav{ display:block; max-width:560px; margin:0 auto; left:0; right:0; }
+.emp-shell .bn-item.active{
+  color:var(--indigo-800);
+  position:relative;
+}
+.emp-shell .bn-item.active::before{
+  content:''; position:absolute; top:2px; left:50%; transform:translateX(-50%);
+  width:34px; height:3px; border-radius:99px; background:var(--marigold-500);
+}
 @media (min-width:560px){
   .emp-shell .bottom-nav{ border-left:1px solid var(--border); border-right:1px solid var(--border); }
 }
@@ -378,8 +389,8 @@ tbody tr:hover{ background:var(--bg); }
 @media (min-width:881px){ #toast{ bottom:24px; } }
 
 /* Section header */
-.section-header{ display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px; }
-.section-header h2{ font-size:17px; font-weight:700; }
+.section-header{ display:flex; align-items:center; justify-content:flex-end; margin-bottom:10px; flex-wrap:wrap; gap:8px; min-height:0; }
+.section-header h2{ display:none; }
 
 /* Pill tabs */
 .pill-tabs{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; }
@@ -438,5 +449,6 @@ const FIREBASE_CONFIG = {
 <script src="app-superadmin.js"></script>
 <script src="app-admin.js"></script>
 <script src="app-employee.js"></script>
+<script src="app-saleshead.js"></script>
 </body>
 </html>

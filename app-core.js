@@ -27,8 +27,8 @@ function escapeHtml(str){
   return String(str).replace(/[&<>"']/g, s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
 }
 function fmtINR(n){
-  n = Number(n)||0;
-  return '₹' + n.toLocaleString('en-IN', {maximumFractionDigits:2});
+  n = Math.round(Number(n)||0);
+  return '₹' + n.toLocaleString('en-IN', {maximumFractionDigits:0});
 }
 function fmtNum(n){ return Number(n||0).toLocaleString('en-IN'); }
 function todayStr(){
@@ -187,6 +187,10 @@ function init(){
       APP.token = params.get('token') || null;
       APP.salesman = params.get('sm') || null;
       renderEmployeeEntry();
+    } else if(view === 'saleshead'){
+      APP.role='saleshead';
+      APP.companyId = params.get('company') || null;
+      renderSalesHeadEntry();
     } else {
       renderLanding();
     }
@@ -213,3 +217,145 @@ function renderLanding(){
 }
 
 window.addEventListener('DOMContentLoaded', init);
+
+/* ============================================================
+   SHARED — Order Approval Panel (used by Admin & Sales Head)
+============================================================ */
+function inSalesHeadScope(salesmanName){
+  if(APP.role!=='saleshead') return true;
+  const scope = (APP.companyData && APP.companyData.salesHeadSalesmen) || [];
+  if(!scope.length) return true;
+  return scope.includes(salesmanName);
+}
+
+let approvalsOutstandingMap = {}; // outletId -> {os, plan, received}, from latest open date
+let approvalsTab = 'pending';
+
+async function loadApprovalsOutstanding(companyId){
+  approvalsOutstandingMap = {};
+  try{
+    const snap = await DB.collection('companies').doc(companyId).collection('outstanding')
+      .orderBy('__name__','desc').limit(1).get();
+    if(!snap.empty){
+      const doc = snap.docs[0];
+      if(doc.data().status==='open'){
+        Object.entries(doc.data().outlets||{}).forEach(([id,o])=>{
+          approvalsOutstandingMap[id] = o;
+        });
+      }
+    }
+  }catch(e){ console.error('Outstanding lookup error', e); }
+}
+
+function initApprovalsPanel(containerSelector, companyId, getOrders, onChange){
+  const root = $(containerSelector);
+  if(!root) return;
+
+  root.innerHTML = `
+    <div class="pill-tabs" id="apprTabs">
+      <button class="pill-tab" data-t="pending">Pending Approval</button>
+      <button class="pill-tab" data-t="ready">Ready for Billing</button>
+      <button class="pill-tab" data-t="billed">Billed</button>
+      <button class="pill-tab" data-t="rejected">Rejected</button>
+    </div>
+    <div id="apprList"><div class="spinner"></div></div>
+  `;
+  $all('#apprTabs .pill-tab').forEach(b=>{
+    b.classList.toggle('active', b.dataset.t===approvalsTab);
+    b.addEventListener('click', ()=>{
+      approvalsTab = b.dataset.t;
+      $all('#apprTabs .pill-tab').forEach(x=>x.classList.toggle('active', x===b));
+      renderApprovalsList(companyId, getOrders());
+    });
+  });
+
+  loadApprovalsOutstanding(companyId).then(()=> renderApprovalsList(companyId, getOrders()));
+}
+
+function renderApprovalsList(companyId, orders){
+  const listEl = $('#apprList');
+  if(!listEl) return;
+  orders = orders || [];
+
+  orders = orders.filter(o=> inSalesHeadScope(o.salesmanName));
+
+  let filtered;
+  if(approvalsTab==='pending') filtered = orders.filter(o=> o.approvalStatus==='pending');
+  else if(approvalsTab==='ready') filtered = orders.filter(o=> o.approvalStatus==='approved' && o.status!=='billed');
+  else if(approvalsTab==='billed') filtered = orders.filter(o=> o.approvalStatus==='approved' && o.status==='billed');
+  else filtered = orders.filter(o=> o.approvalStatus==='rejected');
+
+  if(filtered.length===0){
+    const msgs = {pending:'No orders waiting for approval.', ready:'No approved orders awaiting billing.', billed:'No billed orders yet.', rejected:'No rejected orders.'};
+    listEl.innerHTML = `<div class="empty-state"><div class="es-icon">✅</div><h4>Nothing here</h4><p>${msgs[approvalsTab]}</p></div>`;
+    return;
+  }
+
+  listEl.innerHTML = filtered.map(o=>{
+    const os = approvalsOutstandingMap[o.outletId];
+    const itemsList = (o.items||[]).map(it=>`${escapeHtml(it.itemName)} × ${it.orderedQty}`).join(', ');
+    let actions = '';
+    if(approvalsTab==='pending'){
+      actions = `
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <button class="btn btn-success btn-sm" data-approve="${o.id}">✓ Approve</button>
+          <button class="btn btn-danger btn-sm" data-reject="${o.id}">✕ Reject</button>
+        </div>`;
+    } else if(approvalsTab==='ready' || approvalsTab==='billed'){
+      actions = `<div style="margin-top:8px;"><span class="badge badge-${o.status==='billed'?'green':o.status==='partial'?'blue':'amber'}">${o.status}</span></div>`;
+    } else {
+      actions = o.rejectionReason ? `<div class="helper-text" style="margin-top:6px;">Reason: ${escapeHtml(o.rejectionReason)}</div>` : '';
+    }
+    const cardClass = approvalsTab==='rejected' ? 'pending' : (approvalsTab==='billed' ? 'billed' : (approvalsTab==='ready' ? 'partial' : ''));
+    return `
+      <div class="list-card ${cardClass}">        <div class="lc-top">
+          <div>
+            <div class="lc-title">${escapeHtml(o.outletName)} ${o.isNewOutlet?'<span class="badge badge-amber">New Outlet</span>':''}</div>
+            <div class="lc-meta">${fmtDateDisplay(o.date)} · ${escapeHtml(o.salesmanName)} · ${escapeHtml(o.brand)}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-weight:700;">${fmtINR(o.totalValue)}</div>
+          </div>
+        </div>
+        <div class="lc-meta" style="margin-top:4px;">${itemsList}</div>
+        ${os ? `<div class="lc-meta" style="margin-top:6px;">
+            Outstanding: <b>${fmtINR(os.os)}</b> &nbsp;•&nbsp; Plan: ${fmtINR(os.plan)} &nbsp;•&nbsp; Received: ${fmtINR(os.received)}
+          </div>` : (approvalsTab==='pending' ? `<div class="helper-text" style="margin-top:6px;">No current outstanding data for this outlet.</div>` : '')}
+        ${actions}
+      </div>`;
+  }).join('');
+
+  if(approvalsTab==='pending'){
+    listEl.querySelectorAll('[data-approve]').forEach(btn=>{
+      btn.addEventListener('click', ()=> approveOrder(companyId, orders.find(o=>o.id===btn.dataset.approve)));
+    });
+    listEl.querySelectorAll('[data-reject]').forEach(btn=>{
+      btn.addEventListener('click', ()=> rejectOrder(companyId, orders.find(o=>o.id===btn.dataset.reject)));
+    });
+  }
+}
+
+function approveOrder(companyId, order){
+  DB.collection('companies').doc(companyId).collection('orders').doc(order.id)
+    .update({approvalStatus:'approved'})
+    .then(()=> showToast('Order approved','success'));
+}
+
+function rejectOrder(companyId, order){
+  const reason = prompt('Reason for rejection (optional):','') || '';
+  const itemsRef = DB.collection('companies').doc(companyId).collection('items');
+  const orderRef = DB.collection('companies').doc(companyId).collection('orders').doc(order.id);
+  DB.runTransaction(async tx=>{
+    const refs = order.items.map(i=> itemsRef.doc(i.itemId));
+    const docs = await Promise.all(refs.map(r=>tx.get(r)));
+    order.items.forEach((it,idx)=>{
+      const restore = it.remainingQty||0;
+      if(restore>0){
+        const curQty = (docs[idx].data() && docs[idx].data().qty) || 0;
+        tx.update(refs[idx], {qty: curQty + restore});
+      }
+    });
+    tx.update(orderRef, {approvalStatus:'rejected', rejectionReason:reason});
+  }).then(()=> showToast('Order rejected — stock restored','success'))
+    .catch(err=> showToast('Error: '+err.message,'error'));
+}

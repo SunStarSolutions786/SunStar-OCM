@@ -7,6 +7,7 @@ const ADMIN_NAV = [
   {key:'dashboard', label:'Dashboard', icon:'📊'},
   {key:'master', label:'Master', icon:'🗂️'},
   {key:'orders', label:'Orders', icon:'📦'},
+  {key:'approvals', label:'Approvals', icon:'✅'},
   {key:'stock', label:'Stock', icon:'🗃️'},
   {key:'collection', label:'Outstanding & Collection', icon:'💰'},
   {key:'reports', label:'Reports', icon:'📈'},
@@ -152,6 +153,7 @@ function renderAdminApp(activeKey){
   if(activeKey==='master') renderAdminMaster();
   else if(activeKey==='stock') renderAdminStock();
   else if(activeKey==='orders') renderAdminOrders();
+  else if(activeKey==='approvals') renderAdminApprovals();
   else if(activeKey==='collection') renderAdminCollection();
   else if(activeKey==='dashboard') renderAdminDashboard();
   else if(activeKey==='reports') renderAdminReports();
@@ -188,7 +190,37 @@ function renderAdminSubscription(){
         Your data remains safe at all times, even if access is temporarily suspended due to expiry.
       </p>
     </div>
+
+    <div class="card" style="max-width:420px;">
+      <div class="card-title">Sales Head Access <span class="muted">— order approval before billing</span></div>
+      <div class="field">
+        <label>Sales Head Password</label>
+        <input type="password" class="input" id="shPassInput" value="${escapeHtml(c.salesHeadPassword||'')}" placeholder="Set a password for Sales Head login">
+      </div>
+      <button class="btn btn-accent btn-sm" id="saveShPassBtn">Save Password</button>
+      ${c.salesHeadPassword ? `
+      <div class="divider"></div>
+      <div class="field" style="margin-bottom:0;">
+        <label>Sales Head Login Link</label>
+        <input class="input" id="shLinkInput" readonly value="${location.origin+location.pathname}?view=saleshead&company=${c.id}">
+        <button class="btn btn-outline btn-sm" style="margin-top:8px;" id="copyShLinkBtn">Copy Link</button>
+      </div>` : `<p class="helper-text" style="margin-top:8px;">Set a password and save to generate the Sales Head login link.</p>`}
+    </div>
   `;
+  $('#saveShPassBtn').addEventListener('click', ()=>{
+    const pass = $('#shPassInput').value.trim();
+    if(!pass){ showToast('Enter a password','error'); return; }
+    DB.collection('companies').doc(APP.companyId).update({salesHeadPassword:pass}).then(()=>{
+      APP.companyData.salesHeadPassword = pass;
+      showToast('Sales Head password saved','success');
+      renderAdminSubscription();
+    });
+  });
+  if(c.salesHeadPassword){
+    $('#copyShLinkBtn').addEventListener('click', ()=>{
+      navigator.clipboard.writeText($('#shLinkInput').value).then(()=> showToast('Link copied','success'));
+    });
+  }
 }
 
 /* ============================================================
@@ -200,6 +232,7 @@ function renderAdminMaster(){
     <div class="section-header">
       <h2>Outlet &amp; Salesman Master</h2>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-outline" id="exportMasterBtn">⬇ Export Excel</button>
         <button class="btn btn-outline" id="importMasterBtn">⬆ Import Excel/CSV</button>
         <button class="btn btn-accent" id="addOutletBtn">+ Add Outlet</button>
       </div>
@@ -220,9 +253,19 @@ function renderAdminMaster(){
         <p>Add an outlet manually or import from Excel/CSV.</p>
       </div>
     </div>
+    <div class="card">
+      <div class="card-title">Salesman Order Links <span class="muted">— share each salesman's own pre-filled link</span></div>
+      <div id="salesmanLinksList"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Sales Head Visibility <span class="muted">— which salesmen's data the Sales Head can see/manage</span></div>
+      <div id="salesHeadScopeList"></div>
+      <button class="btn btn-accent btn-sm" id="saveShScopeBtn" style="margin-top:10px;">Save</button>
+    </div>
   `;
 
   $('#addOutletBtn').addEventListener('click', ()=> openOutletModal(null));
+  $('#exportMasterBtn').addEventListener('click', exportMasterExcel);
   $('#importMasterBtn').addEventListener('click', ()=> openMasterImportModal());
   $('#masterSearch').addEventListener('input', renderMasterTable);
   $('#masterSalesmanFilter').addEventListener('change', renderMasterTable);
@@ -238,8 +281,71 @@ function renderAdminMaster(){
       filter.innerHTML = '<option value="">All Salesmen</option>' + salesmen.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
       filter.value = cur;
       renderMasterTable();
+      renderSalesmanLinks(salesmen);
+      renderSalesHeadScope(salesmen);
     });
   APP.unsub.push(unsub);
+}
+
+function renderSalesHeadScope(salesmen){
+  const wrap = $('#salesHeadScopeList');
+  if(!wrap) return;
+  if(!salesmen || salesmen.length===0){
+    wrap.innerHTML = `<p class="helper-text">No salesmen found yet.</p>`;
+    $('#saveShScopeBtn').classList.add('hidden');
+    return;
+  }
+  $('#saveShScopeBtn').classList.remove('hidden');
+  const current = APP.companyData.salesHeadSalesmen || []; // empty = all visible
+  wrap.innerHTML = `
+    <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;margin-bottom:8px;">
+      <input type="checkbox" id="shScopeAll" ${current.length===0?'checked':''}> All Salesmen (no restriction)
+    </label>
+    <div id="shScopeIndividual" style="${current.length===0?'opacity:.5;':''}">
+      ${salesmen.map(sm=>`
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0;">
+          <input type="checkbox" class="sh-scope-item" value="${escapeHtml(sm)}" ${current.includes(sm)?'checked':''} ${current.length===0?'disabled':''}>
+          ${escapeHtml(sm)}
+        </label>`).join('')}
+    </div>
+  `;
+  $('#shScopeAll').addEventListener('change', e=>{
+    const checked = e.target.checked;
+    $('#shScopeIndividual').style.opacity = checked?'.5':'1';
+    $all('.sh-scope-item').forEach(cb=> cb.disabled = checked);
+  });
+  $('#saveShScopeBtn').onclick = ()=>{
+    const all = $('#shScopeAll').checked;
+    const selected = all ? [] : $all('.sh-scope-item').filter(cb=>cb.checked).map(cb=>cb.value);
+    DB.collection('companies').doc(APP.companyId).update({salesHeadSalesmen:selected}).then(()=>{
+      APP.companyData.salesHeadSalesmen = selected;
+      showToast('Sales Head visibility updated','success');
+    });
+  };
+}
+
+function renderSalesmanLinks(salesmen){
+  const wrap = $('#salesmanLinksList');
+  if(!wrap) return;
+  if(!salesmen || salesmen.length===0){
+    wrap.innerHTML = `<p class="helper-text">No salesmen found yet — add outlets with salesman names above.</p>`;
+    return;
+  }
+  const base = location.origin + location.pathname;
+  const token = APP.companyData.employeeToken;
+  wrap.innerHTML = salesmen.map(sm=>{
+    const link = `${base}?view=order&token=${token}&sm=${encodeURIComponent(sm)}`;
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);">
+        <span style="font-weight:600;font-size:13px;">${escapeHtml(sm)}</span>
+        <button class="btn btn-outline btn-sm" data-link="${link}">Copy Link</button>
+      </div>`;
+  }).join('');
+  wrap.querySelectorAll('[data-link]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      navigator.clipboard.writeText(btn.dataset.link).then(()=> showToast('Link copied','success'));
+    });
+  });
 }
 
 function renderMasterTable(){
@@ -535,54 +641,154 @@ function renderStockTable(){
 function openItemModal(item){
   const isEdit = !!item;
   const brands = (APP.brands||[]).map(b=>b.name).sort();
+
+  if(isEdit){
+    openModal(`
+      <h3>Edit Item</h3>
+      <div class="field">
+        <label>Brand</label>
+        <select class="input" id="iBrand">
+          ${brands.map(b=>`<option value="${escapeHtml(b)}" ${item.brand===b?'selected':''}>${escapeHtml(b)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Item Name</label>
+        <input class="input" id="iName" value="${escapeHtml(item.itemName)}" placeholder="e.g. Nokia 105 Classic">
+      </div>
+      <div class="input-row">
+        <div class="field"><label>Quantity</label><input type="number" class="input" id="iQty" value="${item.qty}"></div>
+        <div class="field"><label>Rate (₹)</label><input type="number" class="input" id="iRate" value="${item.rate}"></div>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-accent" id="saveItemBtn">Save</button>
+        <button class="btn btn-outline" id="cancelItemBtn">Cancel</button>
+      </div>
+    `);
+    $('#cancelItemBtn').addEventListener('click', closeModal);
+    $('#saveItemBtn').addEventListener('click', ()=>{
+      const brand = $('#iBrand').value.trim();
+      const itemName = $('#iName').value.trim();
+      const qty = Number($('#iQty').value)||0;
+      const rate = Number($('#iRate').value)||0;
+      if(!brand || !itemName){ showToast('Brand and Item Name are required','error'); return; }
+      DB.collection('companies').doc(APP.companyId).collection('items').doc(item.id).update({
+        brand, itemName, qty, rate, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }).then(()=>{ showToast('Item updated','success'); closeModal(); });
+    });
+    return;
+  }
+
+  // ---- Add mode: choose Existing Stock vs New Item ----
   openModal(`
-    <h3>${isEdit?'Edit Item':'Add Item'}</h3>
-    <div class="field">
-      <label>Brand</label>
-      <select class="input" id="iBrand">
-        ${brands.map(b=>`<option value="${escapeHtml(b)}" ${isEdit && item.brand===b?'selected':''}>${escapeHtml(b)}</option>`).join('')}
-      </select>
+    <h3>Add Stock</h3>
+    <div class="pill-tabs" id="addItemModeTabs">
+      <button class="pill-tab active" data-mode="existing">Add to Existing Item</button>
+      <button class="pill-tab" data-mode="new">New Item</button>
     </div>
-    <div class="field">
-      <label>Item Name</label>
-      <input class="input" id="iName" value="${isEdit?escapeHtml(item.itemName):''}" placeholder="e.g. Nokia 105 Classic">
+
+    <div id="existingBlock">
+      <div class="field">
+        <label>Brand</label>
+        <select class="input" id="exBrand">
+          ${brands.map(b=>`<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Item</label>
+        <select class="input" id="exItem"></select>
+      </div>
+      <div class="input-row">
+        <div class="field"><label>Qty to Add</label><input type="number" class="input" id="exQty" placeholder="0"></div>
+        <div class="field"><label>New Rate (₹) <span class="helper-text" style="display:inline;">optional</span></label><input type="number" class="input" id="exRate" placeholder="Keep current rate"></div>
+      </div>
+      <div class="helper-text" id="exCurrentInfo" style="margin-bottom:10px;"></div>
     </div>
-    <div class="input-row">
-      <div class="field"><label>Quantity</label><input type="number" class="input" id="iQty" value="${isEdit?item.qty:''}" placeholder="0"></div>
-      <div class="field"><label>Rate (₹)</label><input type="number" class="input" id="iRate" value="${isEdit?item.rate:''}" placeholder="0"></div>
+
+    <div id="newBlock" class="hidden">
+      <div class="field">
+        <label>Brand</label>
+        <select class="input" id="iBrand">
+          ${brands.map(b=>`<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Item Name</label>
+        <input class="input" id="iName" placeholder="e.g. Nokia 105 Classic">
+      </div>
+      <div class="input-row">
+        <div class="field"><label>Quantity</label><input type="number" class="input" id="iQty" placeholder="0"></div>
+        <div class="field"><label>Rate (₹)</label><input type="number" class="input" id="iRate" placeholder="0"></div>
+      </div>
+      <div id="dupWarning" class="auth-error" style="margin-bottom:10px;"></div>
     </div>
-    <div id="dupWarning" class="auth-error" style="margin-bottom:10px;"></div>
+
     <div style="display:flex;gap:10px;">
-      <button class="btn btn-accent" id="saveItemBtn">${isEdit?'Save':'Add'}</button>
+      <button class="btn btn-accent" id="saveItemBtn">Add</button>
       <button class="btn btn-outline" id="cancelItemBtn">Cancel</button>
     </div>
   `);
-  $('#cancelItemBtn').addEventListener('click', closeModal);
-  $('#saveItemBtn').addEventListener('click', ()=>{
-    const brand = $('#iBrand').value.trim();
-    const itemName = $('#iName').value.trim();
-    const qty = Number($('#iQty').value)||0;
-    const rate = Number($('#iRate').value)||0;
-    if(!brand || !itemName){ showToast('Brand and Item Name are required','error'); return; }
 
+  $('#cancelItemBtn').addEventListener('click', closeModal);
+
+  let addMode='existing';
+  $all('#addItemModeTabs .pill-tab').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      addMode = b.dataset.mode;
+      $all('#addItemModeTabs .pill-tab').forEach(x=>x.classList.toggle('active', x===b));
+      $('#existingBlock').classList.toggle('hidden', addMode!=='existing');
+      $('#newBlock').classList.toggle('hidden', addMode!=='new');
+    });
+  });
+
+  // Populate item dropdown based on brand
+  const refreshExItems = ()=>{
+    const brand = $('#exBrand').value;
+    const items = (APP.items||[]).filter(i=>i.brand===brand).sort((a,b)=>a.itemName.localeCompare(b.itemName));
+    $('#exItem').innerHTML = items.length
+      ? items.map(i=>`<option value="${i.id}">${escapeHtml(i.itemName)}</option>`).join('')
+      : `<option value="">No items in this brand</option>`;
+    updateExCurrentInfo();
+  };
+  const updateExCurrentInfo = ()=>{
+    const it = (APP.items||[]).find(i=>i.id===$('#exItem').value);
+    $('#exCurrentInfo').textContent = it ? `Current stock: ${fmtNum(it.qty)} pcs @ ${fmtINR(it.rate)}` : '';
+  };
+  $('#exBrand').addEventListener('change', refreshExItems);
+  $('#exItem').addEventListener('change', updateExCurrentInfo);
+  if(brands.length) refreshExItems();
+
+  $('#saveItemBtn').addEventListener('click', ()=>{
     const ref = DB.collection('companies').doc(APP.companyId).collection('items');
 
-    if(!isEdit){
-      // Duplicate-name check within same brand
+    if(addMode==='existing'){
+      const itemId = $('#exItem').value;
+      const addQty = Number($('#exQty').value)||0;
+      const newRate = $('#exRate').value!=='' ? Number($('#exRate').value) : null;
+      if(!itemId){ showToast('No item selected','error'); return; }
+      if(addQty<=0){ showToast('Enter quantity to add','error'); return; }
+      const it = (APP.items||[]).find(i=>i.id===itemId);
+      const update = {qty:(it.qty||0)+addQty, updatedAt: firebase.firestore.FieldValue.serverTimestamp()};
+      if(newRate!==null) update.rate = newRate;
+      ref.doc(itemId).update(update).then(()=>{ showToast('Stock added','success'); closeModal(); });
+    } else {
+      const brand = $('#iBrand').value.trim();
+      const itemName = $('#iName').value.trim();
+      const qty = Number($('#iQty').value)||0;
+      const rate = Number($('#iRate').value)||0;
+      if(!brand || !itemName){ showToast('Brand and Item Name are required','error'); return; }
+
       const match = (APP.items||[]).find(i=> i.brand===brand && norm(i.itemName)===norm(itemName));
       if(match){
         const warn = $('#dupWarning');
         if(!warn.classList.contains('show')){
           warn.textContent = `An item named "${match.itemName}" already exists under ${brand} (Qty: ${match.qty}). Click Add again to confirm adding a separate entry.`;
           warn.classList.add('show');
-          return; // require second click to confirm
+          return;
         }
       }
+      ref.add({brand, itemName, qty, rate, updatedAt: firebase.firestore.FieldValue.serverTimestamp()})
+        .then(()=>{ showToast('Item added','success'); closeModal(); });
     }
-
-    const data = {brand, itemName, qty, rate, updatedAt: firebase.firestore.FieldValue.serverTimestamp()};
-    const promise = isEdit ? ref.doc(item.id).update(data) : ref.add(data);
-    promise.then(()=>{ showToast(isEdit?'Item updated':'Item added','success'); closeModal(); });
   });
 }
 
@@ -713,19 +919,19 @@ function renderAdminOrders(){
       <h2>Orders</h2>
     </div>
     <div class="pill-tabs" id="orderBrandTabs"></div>
+    <div class="pill-tabs" id="orderStatusTabs">
+      <button class="pill-tab" data-s="all">All</button>
+      <button class="pill-tab" data-s="pending">Pending</button>
+      <button class="pill-tab" data-s="partial">Partial</button>
+      <button class="pill-tab" data-s="billed">Billed</button>
+    </div>
     <div class="card">
       <div class="input-row" style="margin-bottom:12px;">
-        <select class="input" id="orderStatusFilter">
-          <option value="all">All Statuses</option>
-          <option value="pending">Pending</option>
-          <option value="partial">Partial</option>
-          <option value="billed">Billed</option>
-        </select>
         <select class="input" id="orderSalesmanFilter"><option value="">All Salesmen</option></select>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Date</th><th>Outlet</th><th>Salesman</th><th>Brand</th><th>Items</th><th>Total</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Date</th><th>Outlet</th><th>Salesman</th><th>Brand</th><th>Items</th><th>Total</th><th>Approval</th><th>Status</th><th></th></tr></thead>
           <tbody id="ordersTbody"></tbody>
         </table>
       </div>
@@ -735,8 +941,14 @@ function renderAdminOrders(){
     </div>
   `;
 
-  $('#orderStatusFilter').value = adminOrderStatus;
-  $('#orderStatusFilter').addEventListener('change', e=>{ adminOrderStatus=e.target.value; renderOrdersTable(); });
+  $all('#orderStatusTabs .pill-tab').forEach(b=>{
+    b.classList.toggle('active', b.dataset.s===adminOrderStatus);
+    b.addEventListener('click', ()=>{
+      adminOrderStatus=b.dataset.s;
+      $all('#orderStatusTabs .pill-tab').forEach(x=>x.classList.toggle('active', x===b));
+      renderOrdersTable();
+    });
+  });
   $('#orderSalesmanFilter').addEventListener('change', e=>{ adminOrderSalesman=e.target.value; renderOrdersTable(); });
 
   const unsub = DB.collection('companies').doc(APP.companyId).collection('orders')
@@ -781,7 +993,16 @@ function renderOrdersTable(){
   if(list.length===0){ tbody.innerHTML=''; emptyEl.classList.remove('hidden'); return; }
   emptyEl.classList.add('hidden');
 
-  tbody.innerHTML = list.map(o=>`
+  tbody.innerHTML = list.map(o=>{
+    const ap = o.approvalStatus !== undefined ? o.approvalStatus : 'approved';
+    const apBadge = ap==='approved' ? '<span class="badge badge-green">Approved</span>'
+                  : ap==='rejected' ? '<span class="badge badge-red">Rejected</span>'
+                  : '<span class="badge badge-amber">Pending Approval</span>';
+    let billBtn;
+    if(ap==='rejected') billBtn = '';
+    else if(ap==='pending') billBtn = `<button class="btn btn-outline btn-sm" disabled title="Awaiting Sales Head approval">Bill</button>`;
+    else billBtn = `<button class="btn btn-outline btn-sm" data-bill="${o.id}">${o.status==='billed'?'View':'Bill'}</button>`;
+    return `
     <tr class="status-${o.status}">
       <td>${fmtDateDisplay(o.date)}</td>
       <td><b>${escapeHtml(o.outletName)}</b> ${o.isNewOutlet?'<span class="badge badge-amber">New Outlet</span>':''}</td>
@@ -789,13 +1010,14 @@ function renderOrdersTable(){
       <td><span class="badge badge-blue">${escapeHtml(o.brand)}</span></td>
       <td>${o.items.length}</td>
       <td>${fmtINR(o.totalValue)}</td>
+      <td>${apBadge}</td>
       <td><span class="badge badge-${o.status==='billed'?'green':o.status==='partial'?'blue':'amber'}">${o.status}</span></td>
       <td style="display:flex;gap:6px;">
-        <button class="btn btn-outline btn-sm" data-bill="${o.id}">${o.status==='billed'?'View':'Bill'}</button>
+        ${billBtn}
         ${o.isNewOutlet?`<button class="btn btn-accent btn-sm" data-resolve="${o.id}">Resolve Outlet</button>`:''}
       </td>
     </tr>
-  `).join('');
+  `;}).join('');
 
   tbody.querySelectorAll('[data-bill]').forEach(b=>{
     b.addEventListener('click', ()=> openBillingModal(APP.orders.find(o=>o.id===b.dataset.bill)));
@@ -808,16 +1030,22 @@ function renderOrdersTable(){
 /* ---------- Billing Modal ---------- */
 function openBillingModal(order){
   const readonly = order.status==='billed';
-  const rowsHtml = order.items.map((it,idx)=>`
-    <tr>
-      <td>${escapeHtml(it.itemName)}</td>
-      <td>${it.orderedQty}</td>
-      <td>${it.billedQty}</td>
-      <td>${it.remainingQty}</td>
-      <td>
-        ${readonly ? '—' : `<input type="number" class="input bill-now-input" style="max-width:80px;" min="0" value="0" data-idx="${idx}">`}
-      </td>
-    </tr>
+  const itemsHtml = order.items.map((it,idx)=>`
+    <div class="list-card" style="margin-bottom:8px;">
+      <div class="lc-top">
+        <div class="lc-title">${escapeHtml(it.itemName)}</div>
+      </div>
+      <div class="lc-meta" style="margin-bottom:${readonly?'0':'8px'};">
+        Ordered: <b>${it.orderedQty}</b> &nbsp;•&nbsp; Billed: <b>${it.billedQty}</b> &nbsp;•&nbsp; Remaining: <b>${it.remainingQty}</b>
+      </div>
+      ${!readonly ? `
+      <div style="display:flex;align-items:center;gap:8px;">
+        <label style="font-size:12px;font-weight:600;color:var(--text-muted);min-width:60px;">Bill Now</label>
+        <button class="btn btn-outline btn-sm" data-act="dec" data-idx="${idx}">−</button>
+        <input type="number" class="input bill-now-input" inputmode="numeric" style="text-align:center;flex:1;" min="0" value="0" data-idx="${idx}">
+        <button class="btn btn-outline btn-sm" data-act="inc" data-idx="${idx}">+</button>
+      </div>` : ''}
+    </div>
   `).join('');
 
   openModal(`
@@ -829,12 +1057,7 @@ function openBillingModal(order){
     <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;margin-bottom:10px;">
       <input type="checkbox" id="billAllChk"> Bill all remaining quantities (full billing)
     </label>` : ''}
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Item</th><th>Ordered</th><th>Billed</th><th>Remaining</th><th>${readonly?'':'Bill Now'}</th></tr></thead>
-        <tbody>${rowsHtml}</tbody>
-      </table>
-    </div>
+    <div style="max-height:46vh;overflow-y:auto;padding-right:2px;">${itemsHtml}</div>
     <div style="display:flex;gap:10px;margin-top:14px;">
       ${!readonly ? `<button class="btn btn-accent" id="submitBillingBtn">Save Billing</button>` : ''}
       <button class="btn btn-outline" id="closeBillingBtn">Close</button>
@@ -847,6 +1070,15 @@ function openBillingModal(order){
       $all('.bill-now-input').forEach(inp=>{
         const idx = Number(inp.dataset.idx);
         inp.value = e.target.checked ? order.items[idx].remainingQty : 0;
+      });
+    });
+    $all('[data-act]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const idx = btn.dataset.idx;
+        const inp = $(`.bill-now-input[data-idx="${idx}"]`);
+        let val = Number(inp.value)||0;
+        val = btn.dataset.act==='inc' ? val+1 : Math.max(0,val-1);
+        inp.value = val;
       });
     });
 
@@ -892,6 +1124,7 @@ function submitBilling(order){
 ============================================================ */
 let adminCollDate = todayStr();
 let adminCollSalesman = '';
+let adminCollActivityOnly = false;
 let adminCollDoc = null; // current date doc data {status, outlets:{}}
 let adminCollDates = []; // recent date docs {id, status}
 
@@ -903,7 +1136,8 @@ function renderAdminCollection(){
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-outline" id="uploadOSBtn">⬆ Upload Outstanding</button>
         <button class="btn btn-outline" id="addOutletDateBtn">+ Add Outlet</button>
-        <button class="btn btn-outline" id="shareSnapBtn">📤 Share Snapshot</button>
+        <button class="btn btn-outline" id="shareSnapBtn">📤 Share</button>
+        <button class="btn btn-outline" id="downloadSnapBtn">⬇ Download</button>
         <button class="btn btn-danger" id="finalizeBtn">Finalize Date</button>
       </div>
     </div>
@@ -911,6 +1145,10 @@ function renderAdminCollection(){
       <div class="input-row" style="margin-bottom:12px;">
         <input type="date" class="input" id="collDateInput" value="${adminCollDate}">
         <select class="input" id="collSalesmanFilter"><option value="">All Salesmen</option></select>
+      </div>
+      <div class="pill-tabs" id="collActivityTabs">
+        <button class="pill-tab active" data-a="all">All Outlets</button>
+        <button class="pill-tab" data-a="activity">With Plan / Received</button>
       </div>
       <div id="recentDatePills" class="pill-tabs"></div>
     </div>
@@ -930,10 +1168,18 @@ function renderAdminCollection(){
 
   $('#collDateInput').addEventListener('change', e=>{ adminCollDate = e.target.value; loadCollectionDate(); });
   $('#collSalesmanFilter').addEventListener('change', e=>{ adminCollSalesman = e.target.value; renderCollectionTable(); });
+  $all('#collActivityTabs .pill-tab').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      adminCollActivityOnly = b.dataset.a==='activity';
+      $all('#collActivityTabs .pill-tab').forEach(x=>x.classList.toggle('active', x===b));
+      renderCollectionTable();
+    });
+  });
   $('#uploadOSBtn').addEventListener('click', ()=> openOSUploadModal());
   $('#addOutletDateBtn').addEventListener('click', ()=> openAddOutletToDateModal());
   $('#finalizeBtn').addEventListener('click', ()=> finalizeDate());
-  $('#shareSnapBtn').addEventListener('click', ()=> shareSnapshot());
+  $('#shareSnapBtn').addEventListener('click', ()=> shareSnapshot(true));
+  $('#downloadSnapBtn').addEventListener('click', ()=> shareSnapshot(false));
 
   loadRecentDates();
   loadCollectionDate();
@@ -976,6 +1222,7 @@ function renderCollectionTable(){
   let entries = Object.entries(outlets); // [outletId, data]
 
   if(adminCollSalesman) entries = entries.filter(([id,o])=> o.salesmanName===adminCollSalesman);
+  if(adminCollActivityOnly) entries = entries.filter(([id,o])=> (Number(o.plan)||0)>0 || (Number(o.received)||0)>0);
 
   // KPIs
   let totalOS=0, totalPlan=0, totalReceived=0, totalPending=0;
@@ -1037,7 +1284,7 @@ function renderCollectionTable(){
       <tr>
         <td><b>${escapeHtml(o.outletName)}</b></td>
         <td>${escapeHtml(o.salesmanName||'—')}</td>
-        <td>${fmtINR(o.os)}</td>
+        <td><input type="number" class="input coll-input" style="max-width:100px;" data-id="${id}" data-field="os" value="${o.os||0}"></td>
         <td><input type="number" class="input coll-input" style="max-width:100px;" data-id="${id}" data-field="plan" value="${o.plan||0}"></td>
         <td><input type="number" class="input coll-input" style="max-width:100px;" data-id="${id}" data-field="received" value="${o.received||0}"></td>
         <td><b>${fmtINR(pending)}</b></td>
@@ -1144,15 +1391,14 @@ function openAddOutletToDateModal(){
 
   openModal(`
     <h3>Add Outlet — ${fmtDateDisplay(adminCollDate)}</h3>
+    <p class="helper-text" style="margin-bottom:12px;">
+      The outlet will be added with Outstanding = 0. You can then edit Outstanding, Plan and Received directly in the table.
+    </p>
     <div class="field">
       <label>Outlet</label>
       <select class="input" id="addOutletSelect">
         ${available.map(o=>`<option value="${o.id}">${escapeHtml(o.outletName)} (${escapeHtml(o.salesmanName||'—')})</option>`).join('')}
       </select>
-    </div>
-    <div class="input-row">
-      <div class="field"><label>Outstanding</label><input type="number" class="input" id="addOutletOS" value="0"></div>
-      <div class="field"><label>Received</label><input type="number" class="input" id="addOutletReceived" value="0"></div>
     </div>
     <div style="display:flex;gap:10px;">
       <button class="btn btn-accent" id="confirmAddOutletDate">Add</button>
@@ -1163,11 +1409,9 @@ function openAddOutletToDateModal(){
   $('#confirmAddOutletDate').addEventListener('click', ()=>{
     const outletId = $('#addOutletSelect').value;
     const outlet = available.find(o=>o.id===outletId);
-    const os = Number($('#addOutletOS').value)||0;
-    const received = Number($('#addOutletReceived').value)||0;
     DB.collection('companies').doc(APP.companyId).collection('outstanding').doc(adminCollDate)
-      .set({status:'open', outlets:{[outletId]:{outletName:outlet.outletName, salesmanName:outlet.salesmanName||'', os, plan:0, received}}}, {merge:true})
-      .then(()=>{ showToast('Outlet added','success'); closeModal(); loadCollectionDate(); });
+      .set({status:'open', outlets:{[outletId]:{outletName:outlet.outletName, salesmanName:outlet.salesmanName||'', os:0, plan:0, received:0}}}, {merge:true})
+      .then(()=>{ showToast('Outlet added — edit values in the table','success'); closeModal(); loadCollectionDate(); });
   });
 }
 
@@ -1193,11 +1437,12 @@ function finalizeDate(){
 }
 
 /* ---------- Snapshot / WhatsApp Share ---------- */
-function shareSnapshot(){
+function shareSnapshot(useShare){
   const doc = adminCollDoc || {outlets:{}};
   const isFinalized = doc.status==='finalized';
   let entries = Object.entries(doc.outlets||{});
   if(adminCollSalesman) entries = entries.filter(([id,o])=> o.salesmanName===adminCollSalesman);
+  if(adminCollActivityOnly) entries = entries.filter(([id,o])=> (Number(o.plan)||0)>0 || (Number(o.received)||0)>0);
   entries.sort((a,b)=> (a[1].outletName||'').localeCompare(b[1].outletName||''));
 
   let totalOS=0,totalPlan=0,totalReceived=0,totalPending=0;
@@ -1246,12 +1491,13 @@ function shareSnapshot(){
     canvas.toBlob(blob=>{
       area.innerHTML=''; area.style.left='-9999px';
       const file = new File([blob], `collection-${adminCollDate}.png`, {type:'image/png'});
-      if(navigator.canShare && navigator.canShare({files:[file]})){
+      if(useShare && navigator.canShare && navigator.canShare({files:[file]})){
         navigator.share({files:[file], title:'Collection Summary', text:`Collection Summary — ${fmtDateDisplay(adminCollDate)}`})
           .catch(()=>{ downloadBlob(blob, `collection-${adminCollDate}.png`); });
       } else {
         downloadBlob(blob, `collection-${adminCollDate}.png`);
-        showToast('Image downloaded — attach it in WhatsApp','success');
+        if(useShare) showToast('Image downloaded — attach it in WhatsApp','success');
+        else showToast('Image downloaded','success');
       }
     });
   });
@@ -1305,14 +1551,10 @@ function renderAdminDashboard(){
         <div class="field" style="display:flex;align-items:flex-end;"><button class="btn btn-accent btn-block" id="dashCustomGo">Apply</button></div>
       </div>
     </div>
-    <div class="grid grid-4" id="dashKpis"><div class="spinner"></div></div>
+    <div class="grid grid-3" id="dashKpis"><div class="spinner"></div></div>
     <div class="grid grid-2">
-      <div class="card"><div class="card-title">Order Value Trend</div><canvas id="chartOrderTrend" height="220"></canvas></div>
+      <div class="card"><div class="card-title">Order vs Billing (by Date)</div><canvas id="chartOrderBilling" height="220"></canvas></div>
       <div class="card"><div class="card-title">Collection: Plan vs Received (by Salesman)</div><canvas id="chartCollection" height="220"></canvas></div>
-    </div>
-    <div class="grid grid-2">
-      <div class="card"><div class="card-title">Salesman-wise Order Value</div><canvas id="chartSalesman" height="220"></canvas></div>
-      <div class="card"><div class="card-title">Brand-wise Sales</div><canvas id="chartBrand" height="220"></canvas></div>
     </div>
   `;
 
@@ -1353,15 +1595,24 @@ async function loadDashboardData(){
   outSnap.forEach(d=> outDocs.push(d.data()));
 
   // ---- KPIs ----
-  const totalOrderValue = orders.reduce((s,o)=>s+(o.totalValue||0),0);
+  let totalOrderValue=0, totalOrderQty=0, totalBilledValue=0, totalBilledQty=0;
+  orders.forEach(o=>{
+    totalOrderValue += o.totalValue||0;
+    (o.items||[]).forEach(it=>{
+      totalOrderQty += it.orderedQty||0;
+      totalBilledQty += it.billedQty||0;
+      totalBilledValue += (it.billedQty||0) * (it.rate||0);
+    });
+  });
   const pendingCount = orders.filter(o=>o.status==='pending').length;
   const partialCount = orders.filter(o=>o.status==='partial').length;
-  const billedCount = orders.filter(o=>o.status==='billed').length;
 
   let totalPlan=0, totalReceived=0, latestOS=0, latestOSDate=null;
   outDocs.forEach(d=> Object.values(d.outlets||{}).forEach(o=>{
     totalPlan += Number(o.plan)||0; totalReceived += Number(o.received)||0;
   }));
+  const collectionPending = Math.max(0, totalPlan - totalReceived);
+
   // latest open date's outstanding total (overall, not just range)
   const latestOpenSnap = await DB.collection('companies').doc(APP.companyId).collection('outstanding')
     .orderBy('__name__','desc').limit(1).get();
@@ -1374,31 +1625,29 @@ async function loadDashboardData(){
   }
 
   $('#dashKpis').innerHTML = `
-    <div class="kpi blue"><div class="label">Order Value</div><div class="value">${fmtINR(totalOrderValue)}</div><div class="sub">${orders.length} order(s)</div></div>
-    <div class="kpi amber"><div class="label">Pending / Partial</div><div class="value">${pendingCount} / ${partialCount}</div><div class="sub">${billedCount} billed</div></div>
+    <div class="kpi blue"><div class="label">Order Value</div><div class="value">${fmtINR(totalOrderValue)}</div><div class="sub">Qty: ${fmtNum(totalOrderQty)}</div></div>
+    <div class="kpi green"><div class="label">Billing Value</div><div class="value">${fmtINR(totalBilledValue)}</div><div class="sub">Qty: ${fmtNum(totalBilledQty)}</div></div>
+    <div class="kpi amber"><div class="label">Pending / Partial</div><div class="value">${pendingCount} / ${partialCount}</div><div class="sub">order(s)</div></div>
     <div class="kpi green"><div class="label">Collection Received</div><div class="value">${fmtINR(totalReceived)}</div><div class="sub">Plan: ${fmtINR(totalPlan)}</div></div>
+    <div class="kpi red"><div class="label">Collection Pending</div><div class="value">${fmtINR(collectionPending)}</div><div class="sub">Plan − Received</div></div>
     <div class="kpi red"><div class="label">Current Outstanding</div><div class="value">${latestOSDate?fmtINR(latestOS):'—'}</div><div class="sub">${latestOSDate?fmtDateDisplay(latestOSDate):'No open date'}</div></div>
   `;
 
-  // ---- Order Value Trend (by date) ----
-  const trendMap = {};
-  orders.forEach(o=>{ trendMap[o.date] = (trendMap[o.date]||0) + (o.totalValue||0); });
-  const trendDates = Object.keys(trendMap).sort();
-  renderChart('chartOrderTrend','line', trendDates.map(fmtDateDisplay), [{label:'Order Value', data:trendDates.map(d=>trendMap[d]), color:'#1e2a4a'}]);
+  // ---- Chart 1: Order vs Billing (by date) ----
+  const orderMap={}, billMap={};
+  orders.forEach(o=>{
+    orderMap[o.date] = (orderMap[o.date]||0) + (o.totalValue||0);
+    let billedVal=0;
+    (o.items||[]).forEach(it=> billedVal += (it.billedQty||0)*(it.rate||0));
+    billMap[o.date] = (billMap[o.date]||0) + billedVal;
+  });
+  const dates = [...new Set([...Object.keys(orderMap), ...Object.keys(billMap)])].sort();
+  renderChart('chartOrderBilling','bar', dates.map(fmtDateDisplay), [
+    {label:'Order Value', data:dates.map(d=>orderMap[d]||0), color:'#1e2a4a'},
+    {label:'Billing Value', data:dates.map(d=>billMap[d]||0), color:'#2e9e5b'}
+  ]);
 
-  // ---- Salesman-wise Order Value ----
-  const smMap={};
-  orders.forEach(o=>{ smMap[o.salesmanName]=(smMap[o.salesmanName]||0)+(o.totalValue||0); });
-  const smNames = Object.keys(smMap);
-  renderChart('chartSalesman','bar', smNames, [{label:'Order Value', data:smNames.map(s=>smMap[s]), color:'#f4a623'}]);
-
-  // ---- Brand-wise Sales ----
-  const brandMap={};
-  orders.forEach(o=>{ brandMap[o.brand]=(brandMap[o.brand]||0)+(o.totalValue||0); });
-  const brandNames = Object.keys(brandMap);
-  renderChart('chartBrand','bar', brandNames, [{label:'Sales Value', data:brandNames.map(b=>brandMap[b]), color:'#3b82c4'}]);
-
-  // ---- Collection Plan vs Received by Salesman ----
+  // ---- Chart 2: Collection Plan vs Received by Salesman ----
   const collMap={};
   outDocs.forEach(d=> Object.values(d.outlets||{}).forEach(o=>{
     const sm = o.salesmanName || 'Unassigned';
@@ -1460,8 +1709,10 @@ function renderAdminReports(){
   const content = $('#pageContent');
   content.innerHTML = `
     <div class="section-header">
-      <h2>Reports</h2>
-      <button class="btn btn-accent" id="exportReportBtn">⬇ Export to Excel</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-accent" id="exportOrderBillingBtn">⬇ Export Order vs Billing</button>
+        <button class="btn btn-accent" id="exportPlanReceivedBtn">⬇ Export Plan vs Received</button>
+      </div>
     </div>
     <div class="pill-tabs" id="repRangeTabs">
       <button class="pill-tab" data-r="today">Today</button>
@@ -1476,6 +1727,7 @@ function renderAdminReports(){
         <div class="field" style="display:flex;align-items:flex-end;"><button class="btn btn-accent btn-block" id="repCustomGo">Apply</button></div>
       </div>
     </div>
+    <div class="grid grid-3" id="repKpis"><div class="spinner"></div></div>
     <div class="card">
       <div class="card-title">Salesman-wise Performance</div>
       <div class="table-wrap">
@@ -1508,7 +1760,8 @@ function renderAdminReports(){
   $('#repCustomGo').addEventListener('click', ()=>{
     repFrom=$('#repFromInput').value; repTo=$('#repToInput').value; loadReportsData();
   });
-  $('#exportReportBtn').addEventListener('click', exportReportsExcel);
+  $('#exportOrderBillingBtn').addEventListener('click', exportOrderBillingExcel);
+  $('#exportPlanReceivedBtn').addEventListener('click', exportPlanReceivedExcel);
   loadReportsData();
 }
 
@@ -1567,70 +1820,123 @@ async function loadReportsData(){
     </tr>`).join('');
   $('#repItemTbody').innerHTML = itemRows || `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">No data</td></tr>`;
 
+  // Overall KPI presentation
+  let totalOrderValue=0, totalOrderQty=0, totalBilledValue=0, totalBilledQty=0;
+  const orderBillingRows=[];
+  orders.forEach(o=>{
+    totalOrderValue += o.totalValue||0;
+    (o.items||[]).forEach(it=>{
+      totalOrderQty += it.orderedQty||0;
+      totalBilledQty += it.billedQty||0;
+      totalBilledValue += (it.billedQty||0)*(it.rate||0);
+      orderBillingRows.push({
+        date:o.date, outletName:o.outletName, salesmanName:o.salesmanName, brand:o.brand,
+        model:it.itemName, stock:it.stockAtOrder!==undefined?it.stockAtOrder:'', order:it.orderedQty,
+        billing:it.billedQty, pending:it.remainingQty
+      });
+    });
+  });
+  let totalPlan=0, totalReceived=0;
+  const planReceivedRows=[];
+  outDocs.forEach(d=> Object.entries(d.outlets||{}).forEach(([id,o])=>{
+    totalPlan += Number(o.plan)||0; totalReceived += Number(o.received)||0;
+    planReceivedRows.push({
+      date:d.id, outletName:o.outletName, salesmanName:o.salesmanName||'',
+      outstanding: o.os!==undefined?o.os:'', plan:o.plan||0, received:o.received||0,
+      pending: o.os!==undefined ? (Number(o.os)||0)-(Number(o.received)||0) : ''
+    });
+  }));
+  const collectionPending = Math.max(0, totalPlan-totalReceived);
+  $('#repKpis').innerHTML = `
+    <div class="kpi blue"><div class="label">Order Value</div><div class="value">${fmtINR(totalOrderValue)}</div><div class="sub">Qty: ${fmtNum(totalOrderQty)}</div></div>
+    <div class="kpi green"><div class="label">Billing Value</div><div class="value">${fmtINR(totalBilledValue)}</div><div class="sub">Qty: ${fmtNum(totalBilledQty)}</div></div>
+    <div class="kpi amber"><div class="label">Order Count</div><div class="value">${orders.length}</div><div class="sub">${orders.filter(o=>o.status==='pending').length} pending, ${orders.filter(o=>o.status==='partial').length} partial</div></div>
+    <div class="kpi green"><div class="label">Collection Received</div><div class="value">${fmtINR(totalReceived)}</div><div class="sub">Plan: ${fmtINR(totalPlan)}</div></div>
+    <div class="kpi red"><div class="label">Collection Pending</div><div class="value">${fmtINR(collectionPending)}</div><div class="sub">Plan − Received</div></div>
+    <div class="kpi"><div class="label">Period</div><div class="value" style="font-size:14px;">${fmtDateDisplay(f)} – ${fmtDateDisplay(t)}</div></div>
+  `;
+
   // Store for Excel export
   APP.repData = {
     range: `${fmtDateDisplay(f)} to ${fmtDateDisplay(t)}`,
     salesman: Object.entries(smMap).map(([sm,d])=>({salesman:sm, orders:d.orders||0, value:d.value||0, pending:d.pending||0, partial:d.partial||0, billed:d.billed||0, plan:d.plan||0, received:d.received||0})),
-    items: Object.values(itemMap).sort((a,b)=>b.value-a.value)
+    items: Object.values(itemMap).sort((a,b)=>b.value-a.value),
+    orderBillingRows, planReceivedRows
   };
   } catch(err){
     console.error('Reports load error:', err);
+    $('#repKpis').innerHTML = `<div class="empty-state" style="grid-column:1/-1;"><div class="es-icon">⚠️</div><h4>Could not load report data</h4><p>${escapeHtml(err.message)}</p></div>`;
     $('#repSalesmanTbody').innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--red-600);">Error: ${escapeHtml(err.message)}</td></tr>`;
     $('#repItemTbody').innerHTML = '';
   }
 }
 
 /* ============================================================
-   EXCEL EXPORT — Reports (color-coded via HTML table -> .xls)
+   EXCEL EXPORTS — Reports (color-coded via HTML table -> .xls)
 ============================================================ */
-function exportReportsExcel(){
+const XLC = {
+  headerBg:'#1e2a4a', headerText:'#ffffff',
+  green:'#e3f7ec', amber:'#fef6db', blue:'#e6f1fb', red:'#fdeaea', gray:'#f6f7fb'
+};
+const xlTh = (txt)=>`<th style="background:${XLC.headerBg};color:${XLC.headerText};padding:6px 10px;font-family:sans-serif;font-size:12px;border:1px solid #ccc;">${escapeHtml(txt)}</th>`;
+const xlTd = (txt, bg, align)=>`<td style="padding:6px 10px;font-family:sans-serif;font-size:12px;border:1px solid #ccc;${bg?`background:${bg};`:''}${align?`text-align:${align};`:''}">${txt}</td>`;
+
+function exportOrderBillingExcel(){
   const data = APP.repData;
   if(!data){ showToast('Report data not ready yet','error'); return; }
 
-  const C = {
-    headerBg:'#1e2a4a', headerText:'#ffffff',
-    green:'#e3f7ec', amber:'#fef6db', blue:'#e6f1fb', red:'#fdeaea', gray:'#f6f7fb'
-  };
-  const th = (txt)=>`<th style="background:${C.headerBg};color:${C.headerText};padding:6px 10px;font-family:sans-serif;font-size:12px;border:1px solid #ccc;">${escapeHtml(txt)}</th>`;
-  const td = (txt, bg, align)=>`<td style="padding:6px 10px;font-family:sans-serif;font-size:12px;border:1px solid #ccc;${bg?`background:${bg};`:''}${align?`text-align:${align};`:''}">${txt}</td>`;
-
   let html = `<html><head><meta charset="utf-8"></head><body>`;
-  html += `<h3 style="font-family:sans-serif;">${escapeHtml(APP.companyData.name)} — Report</h3>`;
+  html += `<h3 style="font-family:sans-serif;">${escapeHtml(APP.companyData.name)} — Order vs Billing</h3>`;
   html += `<p style="font-family:sans-serif;font-size:12px;color:#666;">Period: ${escapeHtml(data.range)}</p>`;
-
-  // Salesman-wise table
-  html += `<h4 style="font-family:sans-serif;">Salesman-wise Performance</h4>`;
   html += `<table cellspacing="0">`;
-  html += `<tr>${th('Salesman')}${th('Orders')}${th('Order Value')}${th('Pending')}${th('Partial')}${th('Billed')}${th('Plan')}${th('Received')}${th('Collection %')}</tr>`;
-  data.salesman.forEach(r=>{
-    const collPct = r.plan>0 ? Math.round((r.received/r.plan)*100) : (r.received>0 ? 100 : 0);
-    const collBg = collPct>=100 ? C.green : (collPct>=50 ? C.amber : C.red);
+  html += `<tr>${xlTh('Date')}${xlTh('Outlet Name')}${xlTh('Salesman Name')}${xlTh('Brand')}${xlTh('Model')}${xlTh('Stock')}${xlTh('Order')}${xlTh('Billing')}${xlTh('Pending')}</tr>`;
+  data.orderBillingRows.forEach(r=>{
+    const pendingBg = r.pending>0 ? XLC.amber : XLC.green;
     html += `<tr>`
-      + td(escapeHtml(r.salesman))
-      + td(r.orders,null,'center')
-      + td(fmtINR(r.value),null,'right')
-      + td(r.pending, r.pending>0?C.amber:C.gray,'center')
-      + td(r.partial, r.partial>0?C.blue:C.gray,'center')
-      + td(r.billed, r.billed>0?C.green:C.gray,'center')
-      + td(fmtINR(r.plan),null,'right')
-      + td(fmtINR(r.received),null,'right')
-      + td(collPct+'%', collBg,'center')
+      + xlTd(fmtDateDisplay(r.date))
+      + xlTd(escapeHtml(r.outletName))
+      + xlTd(escapeHtml(r.salesmanName))
+      + xlTd(escapeHtml(r.brand),XLC.blue,'center')
+      + xlTd(escapeHtml(r.model))
+      + xlTd(r.stock,null,'center')
+      + xlTd(r.order,null,'center')
+      + xlTd(r.billing, r.billing>0?XLC.green:null,'center')
+      + xlTd(r.pending, pendingBg,'center')
       + `</tr>`;
   });
-  html += `</table><br>`;
-
-  // Item-wise table
-  html += `<h4 style="font-family:sans-serif;">Item-wise Sales</h4>`;
-  html += `<table cellspacing="0">`;
-  html += `<tr>${th('Item')}${th('Brand')}${th('Qty Ordered')}${th('Value')}</tr>`;
-  data.items.forEach(it=>{
-    html += `<tr>${td(escapeHtml(it.itemName))}${td(escapeHtml(it.brand),C.blue,'center')}${td(fmtNum(it.qty),null,'center')}${td(fmtINR(it.value),null,'right')}</tr>`;
-  });
-  html += `</table>`;
-  html += `</body></html>`;
+  html += `</table></body></html>`;
 
   const blob = new Blob([html], {type:'application/vnd.ms-excel'});
-  downloadBlob(blob, `SunStar-OCM-Report-${todayStr()}.xls`);
+  downloadBlob(blob, `SunStar-OCM-OrderVsBilling-${todayStr()}.xls`);
+  showToast('Report exported','success');
+}
+
+function exportPlanReceivedExcel(){
+  const data = APP.repData;
+  if(!data){ showToast('Report data not ready yet','error'); return; }
+
+  let html = `<html><head><meta charset="utf-8"></head><body>`;
+  html += `<h3 style="font-family:sans-serif;">${escapeHtml(APP.companyData.name)} — Outstanding, Plan &amp; Received</h3>`;
+  html += `<p style="font-family:sans-serif;font-size:12px;color:#666;">Period: ${escapeHtml(data.range)}</p>`;
+  html += `<table cellspacing="0">`;
+  html += `<tr>${xlTh('Date')}${xlTh('Outlet Name')}${xlTh('Salesman Name')}${xlTh('Outstanding')}${xlTh('Plan')}${xlTh('Received')}${xlTh('Pending')}</tr>`;
+  data.planReceivedRows.forEach(r=>{
+    const pendingBg = r.pending===''? null : (Number(r.pending)>0 ? XLC.amber : XLC.green);
+    const receivedBg = r.received >= r.plan && r.plan>0 ? XLC.green : (r.received>0 ? XLC.blue : null);
+    html += `<tr>`
+      + xlTd(fmtDateDisplay(r.date))
+      + xlTd(escapeHtml(r.outletName))
+      + xlTd(escapeHtml(r.salesmanName))
+      + xlTd(r.outstanding===''?'—':fmtINR(r.outstanding),null,'right')
+      + xlTd(fmtINR(r.plan),null,'right')
+      + xlTd(fmtINR(r.received),receivedBg,'right')
+      + xlTd(r.pending===''?'—':fmtINR(r.pending), pendingBg,'right')
+      + `</tr>`;
+  });
+  html += `</table></body></html>`;
+
+  const blob = new Blob([html], {type:'application/vnd.ms-excel'});
+  downloadBlob(blob, `SunStar-OCM-PlanVsReceived-${todayStr()}.xls`);
   showToast('Report exported','success');
 }
 
@@ -1725,4 +2031,41 @@ function openResolveOutletModal(order){
     showToast('Outlet resolved','success');
     closeModal();
   });
+}
+
+/* ============================================================
+   EXCEL EXPORT — Master (Outlet & Salesman)
+============================================================ */
+function exportMasterExcel(){
+  const list = (APP.outlets||[]).slice().sort((a,b)=>(a.outletName||'').localeCompare(b.outletName||''));
+  let html = `<html><head><meta charset="utf-8"></head><body>`;
+  html += `<h3 style="font-family:sans-serif;">${escapeHtml(APP.companyData.name)} — Outlet &amp; Salesman Master</h3>`;
+  html += `<table cellspacing="0">`;
+  html += `<tr>${xlTh('Outlet Name')}${xlTh('Salesman Name')}</tr>`;
+  list.forEach(o=>{
+    html += `<tr>${xlTd(escapeHtml(o.outletName))}${xlTd(escapeHtml(o.salesmanName||''))}</tr>`;
+  });
+  html += `</table></body></html>`;
+  const blob = new Blob([html], {type:'application/vnd.ms-excel'});
+  downloadBlob(blob, `SunStar-OCM-Master-${todayStr()}.xls`);
+  showToast('Master exported','success');
+}
+
+/* ============================================================
+   APPROVALS TAB (Admin)
+============================================================ */
+function renderAdminApprovals(){
+  const content = $('#pageContent');
+  content.innerHTML = `<div id="apprPanel"></div>`;
+
+  let liveOrders = [];
+  const unsub = DB.collection('companies').doc(APP.companyId).collection('orders')
+    .orderBy('createdAt','desc').limit(300).onSnapshot(snap=>{
+      liveOrders=[];
+      snap.forEach(d=> liveOrders.push(Object.assign({id:d.id}, d.data())));
+      renderApprovalsList(APP.companyId, liveOrders);
+    });
+  APP.unsub.push(unsub);
+
+  initApprovalsPanel('#apprPanel', APP.companyId, ()=>liveOrders);
 }
