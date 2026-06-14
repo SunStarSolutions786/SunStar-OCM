@@ -175,7 +175,7 @@ function setupPWA(){
   } else if(APP.role==='superadmin'){
     name = 'SunStar OCM — Super Admin';
   }
-  const shortName = name.length>14 ? name.slice(0,14) : name;
+  const shortName = 'SunStar OCM';
   const base = location.origin + location.pathname.replace(/\/[^\/]*$/, '/');
 
   const manifest = {
