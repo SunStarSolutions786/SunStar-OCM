@@ -29,6 +29,7 @@ function renderSalesHeadEntry(){
       return;
     }
     APP.salesHeadConfig = head;
+    setupPWA();
 
     const sub = getSubscriptionStatus(APP.companyData);
     if(!sub.active){

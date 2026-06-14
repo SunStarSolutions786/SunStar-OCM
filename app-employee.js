@@ -34,6 +34,7 @@ function renderEmployeeEntry(){
     const doc = snap.docs[0];
     APP.companyId = doc.id;
     APP.companyData = Object.assign({id:doc.id}, doc.data());
+    setupPWA();
     const sub = getSubscriptionStatus(APP.companyData);
     if(!sub.active){
       showEmpFullScreenMessage('Access Suspended','Your company\'s subscription has expired. Please contact your office to restore access.');
@@ -441,36 +442,37 @@ function renderEmpMyOrdersTab(){
       listEl.innerHTML = orders.map(o=>{
         const ds = getOrderDisplayStatus(o);
         const os = isSH ? approvalsOutstandingMap[o.outletId] : null;
-        let extra = '';
+        const pendingVal = getOrderPendingValue(o);
+        const valueLabel = ds.key==='billed' ? 'Billed' : 'Pending';
+        const valueAmount = ds.key==='billed' ? o.totalValue : pendingVal;
+
+        let metaParts = [fmtDateDisplay(o.date)];
+        if(isSH) metaParts.push(escapeHtml(o.salesmanName));
+        metaParts.push(escapeHtml(o.brand));
         if(ds.key==='pending_approval'){
-          if(os){
-            extra += `<div class="lc-meta" style="margin-top:4px;">Outstanding: <b>${fmtINR(os.os)}</b> · Plan: ${fmtINR(os.plan)} · Received: ${fmtINR(os.received)}</div>`;
-          }
-          if(isSH){
-            extra += `<div style="display:flex;gap:8px;margin-top:8px;">
-              <button class="btn btn-success btn-sm" data-approve="${o.id}">✓ Approve</button>
-              <button class="btn btn-danger btn-sm" data-reject="${o.id}">✕ Reject</button>
-            </div>`;
-          } else {
-            extra += `<div class="helper-text" style="margin-top:4px;">Awaiting Sales Head approval</div>`;
-          }
+          if(os) metaParts.push(`OS ${fmtINR(os.os)} · Plan ${fmtINR(os.plan)} · Recv ${fmtINR(os.received)}`);
+          else if(!isSH) metaParts.push('Awaiting Sales Head approval');
         } else if(ds.key==='rejected' && o.rejectionReason){
-          extra += `<div class="helper-text" style="margin-top:4px;">Reason: ${escapeHtml(o.rejectionReason)}</div>`;
+          metaParts.push(`Reason: ${escapeHtml(o.rejectionReason)}`);
         }
+
+        let actions = `<button class="btn btn-outline btn-sm" data-items="${o.id}">Items</button>`;
+        if(ds.key==='pending_approval' && isSH){
+          actions = `<button class="btn btn-success btn-sm" data-approve="${o.id}">✓</button>
+            <button class="btn btn-danger btn-sm" data-reject="${o.id}">✕</button> ` + actions;
+        }
+
         return `
         <div class="list-card ${ds.key==='billed'?'billed':ds.key==='rejected'?'rejected':ds.key==='partial'||ds.key==='ready'?'partial':'pending'}">
           <div class="lc-top">
-            <div>
-              <div class="lc-title">${escapeHtml(o.outletName)}</div>
-              <div class="lc-meta">${fmtDateDisplay(o.date)} · ${isSH?escapeHtml(o.salesmanName)+' · ':''}${escapeHtml(o.brand)} · ${o.items.length} item(s)</div>
-            </div>
+            <div class="lc-title">${escapeHtml(o.outletName)}</div>
             <span class="badge badge-${ds.color}">${ds.label}</span>
           </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
-            <div style="font-weight:700;">${fmtINR(o.totalValue)}</div>
-            <button class="btn btn-outline btn-sm" data-items="${o.id}">Items</button>
+          <div class="lc-meta">${metaParts.join(' · ')}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;gap:8px;">
+            <div style="font-weight:700;white-space:nowrap;">${valueLabel}: ${fmtINR(valueAmount)}</div>
+            <div style="display:flex;gap:6px;flex-shrink:0;">${actions}</div>
           </div>
-          ${extra}
         </div>`;
       }).join('');
 
@@ -648,6 +650,16 @@ function renderEmpReportsTab(){
         </table>
       </div>
     </div>
+    <div class="card">
+      <div class="card-title">Outlet-wise Summary</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Outlet</th><th>Orders</th><th>Order Value</th><th>Billed Value</th><th>Plan</th><th>Received</th></tr></thead>
+          <tbody id="empRepOutletTbody"></tbody>
+          <tfoot id="empRepOutletTfoot"></tfoot>
+        </table>
+      </div>
+    </div>
   `;
   $all('#empRepRangeTabs .pill-tab').forEach(b=>{
     b.classList.toggle('active', b.dataset.r===empRepRange);
@@ -751,6 +763,48 @@ async function loadEmpReports(){
     <div class="kpi green"><div class="label">Collection</div><div class="value">${fmtINR(totalReceived)}</div><div class="sub">Plan: ${fmtINR(totalPlan)}</div></div>
     <div class="kpi red"><div class="label">Collection Pending</div><div class="value">${fmtINR(collectionPending)}</div></div>
   `;
+
+  // ---- Outlet-wise aggregation ----
+  const outletMap = {};
+  const ensureOutlet = (name)=>{
+    if(!outletMap[name]) outletMap[name] = {orders:0, orderValue:0, billingValue:0, plan:0, received:0};
+    return outletMap[name];
+  };
+  orders.forEach(o=>{
+    const row = ensureOutlet(o.outletName);
+    row.orders++; row.orderValue += o.totalValue||0;
+    (o.items||[]).forEach(it=>{ row.billingValue += (it.billedQty||0)*(it.rate||0); });
+  });
+  outDocs.forEach(d=> Object.values(d.outlets||{}).forEach(o=>{
+    if(isSH){
+      if(!inSalesHeadScope(o.salesmanName)) return;
+      if(empRepSalesmanFilter && o.salesmanName!==empRepSalesmanFilter) return;
+    } else {
+      if(o.salesmanName!==APP.salesman) return;
+    }
+    const row = ensureOutlet(o.outletName);
+    row.plan += Number(o.plan)||0; row.received += Number(o.received)||0;
+  }));
+  const outletNames = Object.keys(outletMap).sort();
+  let oTotOrders=0, oTotOrderValue=0, oTotBilling=0, oTotPlan=0, oTotReceived=0;
+  const outletRows = outletNames.map(name=>{
+    const r = outletMap[name];
+    oTotOrders+=r.orders; oTotOrderValue+=r.orderValue; oTotBilling+=r.billingValue; oTotPlan+=r.plan; oTotReceived+=r.received;
+    return `<tr>
+      <td>${escapeHtml(name)}</td>
+      <td>${r.orders}</td>
+      <td>${fmtINR(r.orderValue)}</td>
+      <td>${fmtINR(r.billingValue)}</td>
+      <td>${fmtINR(r.plan)}</td>
+      <td>${fmtINR(r.received)}</td>
+    </tr>`;
+  }).join('');
+  $('#empRepOutletTbody').innerHTML = outletRows || `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);">No data for this period</td></tr>`;
+  $('#empRepOutletTfoot').innerHTML = outletNames.length ? `
+    <tr style="font-weight:700;background:var(--bg);">
+      <td>Total</td><td>${oTotOrders}</td><td>${fmtINR(oTotOrderValue)}</td>
+      <td>${fmtINR(oTotBilling)}</td><td>${fmtINR(oTotPlan)}</td><td>${fmtINR(oTotReceived)}</td>
+    </tr>` : '';
   } catch(err){
     console.error('Employee reports load error:', err);
     $('#empRepKpis').innerHTML = `
@@ -759,5 +813,7 @@ async function loadEmpReports(){
       </div>`;
     $('#empRepDateTbody').innerHTML = '';
     $('#empRepDateTfoot').innerHTML = '';
+    $('#empRepOutletTbody').innerHTML = '';
+    $('#empRepOutletTfoot').innerHTML = '';
   }
 }

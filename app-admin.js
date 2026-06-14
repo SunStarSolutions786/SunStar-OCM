@@ -51,6 +51,7 @@ function renderAdminEntry(){
       return;
     }
     APP.companyData = Object.assign({id:doc.id}, doc.data());
+    setupPWA();
     if(sessionStorage.getItem('admin_auth_'+APP.companyId)==='1'){
       checkSubscriptionAndEnter();
     } else {
@@ -1019,7 +1020,7 @@ function renderOrdersTable(){
       <td>${escapeHtml(o.salesmanName)}</td>
       <td><span class="badge badge-blue">${escapeHtml(o.brand)}</span></td>
       <td>${o.items.length}</td>
-      <td>${fmtINR(o.totalValue)}</td>
+      <td>${fmtINR(o.totalValue)}${o.status==='partial'?`<div class="helper-text" style="margin-top:2px;">Pending: ${fmtINR(getOrderPendingValue(o))}</div>`:''}</td>
       <td>${os ? fmtINR(os.os) : '—'}</td>
       <td><span class="badge badge-${ds.color}">${ds.label}</span></td>
       <td style="display:flex;gap:6px;flex-wrap:wrap;">
@@ -1540,7 +1541,7 @@ function renderAdminDashboard(){
       </div>
     </div>
     <div class="grid grid-3" id="dashKpis"><div class="spinner"></div></div>
-    <div class="grid grid-2">
+    <div class="grid grid-charts">
       <div class="card"><div class="card-title">Order vs Billing (by Date)</div><canvas id="chartOrderBilling" height="220"></canvas></div>
       <div class="card"><div class="card-title">Collection: Plan vs Received (by Salesman)</div><canvas id="chartCollection" height="220"></canvas></div>
     </div>

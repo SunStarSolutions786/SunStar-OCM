@@ -113,6 +113,7 @@ function getSubscriptionStatus(company){
 function buildShellLayout({brandName, brandSub, navItems, activeKey, onNav, footerHtml, roleClass}){
   const root = el(`
     <div class="app ${roleClass||''}">
+      <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
       <div class="sidebar" id="sidebar">
         <div class="sidebar-brand">
           <div class="mark">S</div>
@@ -148,12 +149,55 @@ function buildShellLayout({brandName, brandSub, navItems, activeKey, onNav, foot
   setTimeout(()=>{
     const toggle = root.querySelector('#menuToggle');
     const sidebar = root.querySelector('#sidebar');
-    if(toggle) toggle.addEventListener('click', ()=> sidebar.classList.toggle('open'));
+    const backdrop = root.querySelector('#sidebarBackdrop');
+    const setOpen = (open)=>{
+      sidebar.classList.toggle('open', open);
+      if(backdrop) backdrop.classList.toggle('open', open);
+    };
+    if(toggle) toggle.addEventListener('click', ()=> setOpen(!sidebar.classList.contains('open')));
+    if(backdrop) backdrop.addEventListener('click', ()=> setOpen(false));
     sidebar && sidebar.addEventListener('click', e=>{
-      if(e.target.closest('.nav-item') && window.innerWidth<=880) sidebar.classList.remove('open');
+      if(e.target.closest('.nav-item') && window.innerWidth<=880) setOpen(false);
     });
   });
   return root;
+}
+
+/* ---------- PWA setup: per-role install name + manifest ---------- */
+function setupPWA(){
+  let name = 'SunStar OCM';
+  if(APP.role==='admin'){
+    name = APP.companyData ? `${APP.companyData.name} — Admin` : 'SunStar OCM — Admin';
+  } else if(APP.role==='employee'){
+    name = APP.salesman ? `SunStar OCM — ${APP.salesman}` : 'SunStar OCM — Orders';
+  } else if(APP.role==='saleshead'){
+    name = APP.salesHeadConfig ? `SunStar OCM — ${APP.salesHeadConfig.name}` : 'SunStar OCM — Sales Head';
+  } else if(APP.role==='superadmin'){
+    name = 'SunStar OCM — Super Admin';
+  }
+  const shortName = name.length>14 ? name.slice(0,14) : name;
+  const base = location.origin + location.pathname.replace(/\/[^\/]*$/, '/');
+
+  const manifest = {
+    name, short_name: shortName,
+    start_url: location.href,
+    scope: base,
+    display:'standalone', orientation:'portrait',
+    background_color:'#f6f7fb', theme_color:'#1e2a4a',
+    icons:[
+      {src: base+'icon-192.png', sizes:'192x192', type:'image/png', purpose:'any'},
+      {src: base+'icon-512.png', sizes:'512x512', type:'image/png', purpose:'any'},
+      {src: base+'icon-192-maskable.png', sizes:'192x192', type:'image/png', purpose:'maskable'},
+      {src: base+'icon-512-maskable.png', sizes:'512x512', type:'image/png', purpose:'maskable'}
+    ]
+  };
+  const blob = new Blob([JSON.stringify(manifest)], {type:'application/json'});
+  const link = document.getElementById('appManifest');
+  if(link) link.setAttribute('href', URL.createObjectURL(blob));
+
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register(base+'service-worker.js').catch(()=>{});
+  }
 }
 
 function setPageTitle(title){
@@ -177,20 +221,24 @@ function init(){
 
     if(view === 'superadmin'){
       APP.role='superadmin';
+      setupPWA();
       renderSuperAdminEntry();
     } else if(view === 'admin'){
       APP.role='admin';
       APP.companyId = params.get('company') || null;
+      setupPWA();
       renderAdminEntry();
     } else if(view === 'order'){
       APP.role='employee';
       APP.token = params.get('token') || null;
       APP.salesman = params.get('sm') || null;
+      setupPWA();
       renderEmployeeEntry();
     } else if(view === 'saleshead'){
       APP.role='saleshead';
       APP.companyId = params.get('company') || null;
       APP.salesHeadId = params.get('head') || null;
+      setupPWA();
       renderSalesHeadEntry();
     } else {
       renderLanding();
@@ -236,6 +284,15 @@ function getOrderDisplayStatus(o){
   if(o.status==='billed') return {key:'billed', label:'Billed', color:'green'};
   if(o.status==='partial') return {key:'partial', label:'Partial', color:'blue'};
   return {key:'ready', label:'Ready for Billing', color:'blue'};
+}
+
+/* Value remaining to be billed for an order */
+function getOrderPendingValue(o){
+  return (o.items||[]).reduce((s,i)=> s + (Number(i.remainingQty)||0)*(Number(i.rate)||0), 0);
+}
+/* Value already billed for an order */
+function getOrderBilledValue(o){
+  return (o.items||[]).reduce((s,i)=> s + (Number(i.billedQty)||0)*(Number(i.rate)||0), 0);
 }
 
 let approvalsOutstandingMap = {}; // outletId -> {os, plan, received}, from latest open date
