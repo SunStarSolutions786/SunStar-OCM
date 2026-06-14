@@ -431,9 +431,10 @@ function rejectOrder(companyId, order){
    SHARED — Order Item-wise Detail Modal
    (used by Admin Orders, Employee My Orders, Sales Head Orders)
 ============================================================ */
-function openOrderItemsModal(order){
+function openOrderItemsModal(order, onChange){
   const ds = getOrderDisplayStatus(order);
   const showBilled = order.status==='partial' || order.status==='billed';
+  const os = order.outletId ? approvalsOutstandingMap[order.outletId] : null;
 
   const rows = (order.items||[]).map(it=>{
     const value = (it.orderedQty||0)*(it.rate||0);
@@ -453,12 +454,27 @@ function openOrderItemsModal(order){
   const totalBilledQty = (order.items||[]).reduce((s,i)=>s+(i.billedQty||0),0);
   const totalBilledValue = (order.items||[]).reduce((s,i)=>s+(i.billedQty||0)*(i.rate||0),0);
 
+  let noteHtml = '';
+  if(ds.key==='pending_approval' && os){
+    noteHtml = `<div class="card" style="background:var(--amber-100);border-color:var(--amber-600);margin-bottom:12px;">
+      <div class="card-title" style="margin:0 0 4px;">Outlet Outstanding (latest open date)</div>
+      <div class="lc-meta">Outstanding: <b>${fmtINR(os.os)}</b> · Plan: <b>${fmtINR(os.plan)}</b> · Received: <b>${fmtINR(os.received)}</b></div>
+    </div>`;
+  } else if(ds.key==='pending_approval'){
+    noteHtml = `<div class="helper-text" style="margin-bottom:12px;">No current outstanding data found for this outlet.</div>`;
+  } else if(ds.key==='rejected' && order.rejectionReason){
+    noteHtml = `<div class="helper-text" style="margin-bottom:12px;">Rejection reason: ${escapeHtml(order.rejectionReason)}</div>`;
+  }
+
+  const canApprove = ds.key==='pending_approval' && APP.role==='saleshead';
+
   openModal(`
     <h3>${escapeHtml(order.outletName)} — Item Details</h3>
     <div class="helper-text" style="margin-bottom:10px;">
       ${fmtDateDisplay(order.date)} · ${escapeHtml(order.salesmanName)} · ${escapeHtml(order.brand)}
       &nbsp; <span class="badge badge-${ds.color}">${ds.label}</span>
     </div>
+    ${noteHtml}
     <div class="table-wrap">
       <table>
         <thead><tr>
@@ -477,9 +493,23 @@ function openOrderItemsModal(order){
         </tfoot>
       </table>
     </div>
-    <div style="margin-top:14px;">
+    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
+      ${canApprove ? `<button class="btn btn-success" id="modalApproveBtn">✓ Approve</button>
+        <button class="btn btn-danger" id="modalRejectBtn">✕ Reject</button>` : ''}
       <button class="btn btn-outline" id="closeOrderItemsBtn">Close</button>
     </div>
   `);
   $('#closeOrderItemsBtn').addEventListener('click', closeModal);
+  if(canApprove){
+    $('#modalApproveBtn').addEventListener('click', ()=>{
+      approveOrder(APP.companyId, order);
+      closeModal();
+      if(onChange) onChange();
+    });
+    $('#modalRejectBtn').addEventListener('click', ()=>{
+      rejectOrder(APP.companyId, order);
+      closeModal();
+      if(onChange) onChange();
+    });
+  }
 }

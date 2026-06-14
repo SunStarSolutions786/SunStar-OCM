@@ -441,7 +441,6 @@ function renderEmpMyOrdersTab(){
       }
       listEl.innerHTML = orders.map(o=>{
         const ds = getOrderDisplayStatus(o);
-        const os = isSH ? approvalsOutstandingMap[o.outletId] : null;
         const pendingVal = getOrderPendingValue(o);
         const valueLabel = ds.key==='billed' ? 'Billed' : 'Pending';
         const valueAmount = ds.key==='billed' ? o.totalValue : pendingVal;
@@ -449,17 +448,12 @@ function renderEmpMyOrdersTab(){
         let metaParts = [fmtDateDisplay(o.date)];
         if(isSH) metaParts.push(escapeHtml(o.salesmanName));
         metaParts.push(escapeHtml(o.brand));
-        if(ds.key==='pending_approval'){
-          if(os) metaParts.push(`OS ${fmtINR(os.os)} · Plan ${fmtINR(os.plan)} · Recv ${fmtINR(os.received)}`);
-          else if(!isSH) metaParts.push('Awaiting Sales Head approval');
-        } else if(ds.key==='rejected' && o.rejectionReason){
-          metaParts.push(`Reason: ${escapeHtml(o.rejectionReason)}`);
-        }
+        metaParts.push(`${valueLabel}: ${fmtINR(valueAmount)}`);
 
         let actions = `<button class="btn btn-outline btn-sm" data-items="${o.id}">Items</button>`;
         if(ds.key==='pending_approval' && isSH){
-          actions = `<button class="btn btn-success btn-sm" data-approve="${o.id}">✓</button>
-            <button class="btn btn-danger btn-sm" data-reject="${o.id}">✕</button> ` + actions;
+          actions = `<button class="btn btn-success btn-sm" data-approve="${o.id}" title="Approve">✓</button>
+            <button class="btn btn-danger btn-sm" data-reject="${o.id}" title="Reject">✕</button> ` + actions;
         }
 
         return `
@@ -468,16 +462,15 @@ function renderEmpMyOrdersTab(){
             <div class="lc-title">${escapeHtml(o.outletName)}</div>
             <span class="badge badge-${ds.color}">${ds.label}</span>
           </div>
-          <div class="lc-meta">${metaParts.join(' · ')}</div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;gap:8px;">
-            <div style="font-weight:700;white-space:nowrap;">${valueLabel}: ${fmtINR(valueAmount)}</div>
+          <div class="lc-row2">
+            <div class="lc-meta">${metaParts.join(' · ')}</div>
             <div style="display:flex;gap:6px;flex-shrink:0;">${actions}</div>
           </div>
         </div>`;
       }).join('');
 
       listEl.querySelectorAll('[data-items]').forEach(btn=>{
-        btn.addEventListener('click', ()=> openOrderItemsModal(orders.find(o=>o.id===btn.dataset.items)));
+        btn.addEventListener('click', ()=> openOrderItemsModal(orders.find(o=>o.id===btn.dataset.items), renderEmpMyOrdersTab));
       });
 
       if(isSH){
