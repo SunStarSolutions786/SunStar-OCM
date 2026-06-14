@@ -1,14 +1,14 @@
 /* ============================================================
    SunStar OCM — app-saleshead.js
-   Sales Head: lightweight login, approve/reject orders with
-   outlet outstanding visibility
+   Sales Head: lightweight login (multi-head supported), full
+   employee-style app with order approval built into Orders tab
 ============================================================ */
 
 function renderSalesHeadEntry(){
-  if(!APP.companyId){
+  if(!APP.companyId || !APP.salesHeadId){
     $('#appRoot').innerHTML = `<div class="auth-wrap"><div class="auth-card">
       <div class="auth-logo" style="background:var(--red-600);">!</div><h2>Invalid Link</h2>
-      <div class="auth-sub">No company specified. Please use the link provided by your Admin.</div>
+      <div class="auth-sub">This Sales Head link is incomplete. Please ask your Admin for the correct link.</div>
     </div></div>`;
     return;
   }
@@ -20,14 +20,15 @@ function renderSalesHeadEntry(){
       return;
     }
     APP.companyData = Object.assign({id:doc.id}, doc.data());
-
-    if(!APP.companyData.salesHeadPassword){
+    const head = (APP.companyData.salesHeads||[]).find(h=>h.id===APP.salesHeadId);
+    if(!head){
       $('#appRoot').innerHTML = `<div class="auth-wrap"><div class="auth-card">
         <div class="auth-logo" style="background:var(--red-600);">!</div><h2>Not Set Up</h2>
-        <div class="auth-sub">Sales Head access has not been enabled for this company yet. Please ask your Admin to set it up under Subscription.</div>
+        <div class="auth-sub">This Sales Head account no longer exists. Please ask your Admin for an updated link.</div>
       </div></div>`;
       return;
     }
+    APP.salesHeadConfig = head;
 
     const sub = getSubscriptionStatus(APP.companyData);
     if(!sub.active){
@@ -38,7 +39,8 @@ function renderSalesHeadEntry(){
       return;
     }
 
-    if(sessionStorage.getItem('saleshead_auth_'+APP.companyId)==='1'){
+    const sessKey = 'saleshead_auth_'+APP.companyId+'_'+APP.salesHeadId;
+    if(sessionStorage.getItem(sessKey)==='1'){
       renderSalesHeadApp();
     } else {
       renderSalesHeadLogin();
@@ -47,16 +49,17 @@ function renderSalesHeadEntry(){
 }
 
 function renderSalesHeadLogin(){
+  const head = APP.salesHeadConfig;
   const root = el(`
     <div class="auth-wrap">
       <div class="auth-card">
         <div class="auth-logo">S</div>
         <h2>${escapeHtml(APP.companyData.name)}</h2>
-        <div class="auth-sub">Sales Head Login — SunStar OCM</div>
+        <div class="auth-sub">Sales Head Login — ${escapeHtml(head.name)}</div>
         <div class="auth-error" id="shErr">Incorrect password. Please try again.</div>
         <div class="field">
           <label>Password</label>
-          <input type="password" class="input" id="shPass" placeholder="Enter Sales Head password">
+          <input type="password" class="input" id="shPass" placeholder="Enter password">
         </div>
         <button class="btn btn-accent btn-block" id="shLoginBtn">Log In</button>
       </div>
@@ -67,8 +70,8 @@ function renderSalesHeadLogin(){
 
   const doLogin = ()=>{
     const p = $('#shPass').value.trim();
-    if(p === APP.companyData.salesHeadPassword){
-      sessionStorage.setItem('saleshead_auth_'+APP.companyId,'1');
+    if(p === head.password){
+      sessionStorage.setItem('saleshead_auth_'+APP.companyId+'_'+APP.salesHeadId,'1');
       renderSalesHeadApp();
     } else {
       $('#shErr').classList.add('show');
@@ -86,9 +89,9 @@ function renderSalesHeadApp(){
         <div class="et-row">
           <div>
             <div class="et-title">${escapeHtml(APP.companyData.name)}</div>
-            <div class="et-sub">Sales Head</div>
+            <div class="et-sub">Sales Head · ${escapeHtml(APP.salesHeadConfig.name)}</div>
           </div>
-          <div class="et-avatar" id="shAvatar" title="Log out">SH</div>
+          <div class="et-avatar" id="shAvatar" title="Log out">${escapeHtml(APP.salesHeadConfig.name.slice(0,2).toUpperCase())}</div>
         </div>
       </div>
       <div class="emp-content" id="empContent"></div>
@@ -101,7 +104,7 @@ function renderSalesHeadApp(){
 
   $('#shAvatar').addEventListener('click', ()=>{
     if(confirm('Log out of Sales Head panel?')){
-      sessionStorage.removeItem('saleshead_auth_'+APP.companyId);
+      sessionStorage.removeItem('saleshead_auth_'+APP.companyId+'_'+APP.salesHeadId);
       location.reload();
     }
   });
@@ -109,11 +112,10 @@ function renderSalesHeadApp(){
   const navItems = [
     {key:'order', label:'New Order', icon:'🛒'},
     {key:'myorders', label:'Orders', icon:'📋'},
-    {key:'approvals', label:'Approvals', icon:'✅'},
     {key:'collection', label:'Collection', icon:'💰'},
     {key:'reports', label:'Reports', icon:'📈'}
   ];
-  empActiveTab = 'approvals';
+  empActiveTab = 'myorders';
   const navEl = $('#empBottomNav');
   navItems.forEach(item=>{
     const btn = el(`<button class="bn-item ${empActiveTab===item.key?'active':''}" data-key="${item.key}">
@@ -138,22 +140,4 @@ function renderSalesHeadApp(){
   APP.unsub.push(unsub1, unsub2);
 
   renderEmpTab();
-}
-
-/* ---------- Approvals tab wrapper for Sales Head ---------- */
-function renderShApprovalsTab(){
-  const bar = $('#empCartBar'); if(bar) bar.remove();
-  const content = $('#empContent');
-  content.innerHTML = `<div id="apprPanel"></div>`;
-
-  let liveOrders = [];
-  const unsub = DB.collection('companies').doc(APP.companyId).collection('orders')
-    .orderBy('createdAt','desc').limit(300).onSnapshot(snap=>{
-      liveOrders=[];
-      snap.forEach(d=> liveOrders.push(Object.assign({id:d.id}, d.data())));
-      renderApprovalsList(APP.companyId, liveOrders);
-    });
-  APP.unsub.push(unsub);
-
-  initApprovalsPanel('#apprPanel', APP.companyId, ()=>liveOrders);
 }

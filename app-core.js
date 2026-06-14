@@ -190,6 +190,7 @@ function init(){
     } else if(view === 'saleshead'){
       APP.role='saleshead';
       APP.companyId = params.get('company') || null;
+      APP.salesHeadId = params.get('head') || null;
       renderSalesHeadEntry();
     } else {
       renderLanding();
@@ -223,9 +224,18 @@ window.addEventListener('DOMContentLoaded', init);
 ============================================================ */
 function inSalesHeadScope(salesmanName){
   if(APP.role!=='saleshead') return true;
-  const scope = (APP.companyData && APP.companyData.salesHeadSalesmen) || [];
+  const scope = (APP.salesHeadConfig && APP.salesHeadConfig.salesmen) || [];
   if(!scope.length) return true;
   return scope.includes(salesmanName);
+}
+
+/* Unified order status used across Orders (Admin/Employee/Sales Head) */
+function getOrderDisplayStatus(o){
+  if(o.approvalStatus==='pending') return {key:'pending_approval', label:'Pending Approval', color:'amber'};
+  if(o.approvalStatus==='rejected') return {key:'rejected', label:'Rejected', color:'red'};
+  if(o.status==='billed') return {key:'billed', label:'Billed', color:'green'};
+  if(o.status==='partial') return {key:'partial', label:'Partial', color:'blue'};
+  return {key:'ready', label:'Ready for Billing', color:'blue'};
 }
 
 let approvalsOutstandingMap = {}; // outletId -> {os, plan, received}, from latest open date

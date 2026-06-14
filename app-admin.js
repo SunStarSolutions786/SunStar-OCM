@@ -7,7 +7,6 @@ const ADMIN_NAV = [
   {key:'dashboard', label:'Dashboard', icon:'📊'},
   {key:'master', label:'Master', icon:'🗂️'},
   {key:'orders', label:'Orders', icon:'📦'},
-  {key:'approvals', label:'Approvals', icon:'✅'},
   {key:'stock', label:'Stock', icon:'🗃️'},
   {key:'collection', label:'Outstanding & Collection', icon:'💰'},
   {key:'reports', label:'Reports', icon:'📈'},
@@ -153,7 +152,6 @@ function renderAdminApp(activeKey){
   if(activeKey==='master') renderAdminMaster();
   else if(activeKey==='stock') renderAdminStock();
   else if(activeKey==='orders') renderAdminOrders();
-  else if(activeKey==='approvals') renderAdminApprovals();
   else if(activeKey==='collection') renderAdminCollection();
   else if(activeKey==='dashboard') renderAdminDashboard();
   else if(activeKey==='reports') renderAdminReports();
@@ -190,37 +188,7 @@ function renderAdminSubscription(){
         Your data remains safe at all times, even if access is temporarily suspended due to expiry.
       </p>
     </div>
-
-    <div class="card" style="max-width:420px;">
-      <div class="card-title">Sales Head Access <span class="muted">— order approval before billing</span></div>
-      <div class="field">
-        <label>Sales Head Password</label>
-        <input type="password" class="input" id="shPassInput" value="${escapeHtml(c.salesHeadPassword||'')}" placeholder="Set a password for Sales Head login">
-      </div>
-      <button class="btn btn-accent btn-sm" id="saveShPassBtn">Save Password</button>
-      ${c.salesHeadPassword ? `
-      <div class="divider"></div>
-      <div class="field" style="margin-bottom:0;">
-        <label>Sales Head Login Link</label>
-        <input class="input" id="shLinkInput" readonly value="${location.origin+location.pathname}?view=saleshead&company=${c.id}">
-        <button class="btn btn-outline btn-sm" style="margin-top:8px;" id="copyShLinkBtn">Copy Link</button>
-      </div>` : `<p class="helper-text" style="margin-top:8px;">Set a password and save to generate the Sales Head login link.</p>`}
-    </div>
   `;
-  $('#saveShPassBtn').addEventListener('click', ()=>{
-    const pass = $('#shPassInput').value.trim();
-    if(!pass){ showToast('Enter a password','error'); return; }
-    DB.collection('companies').doc(APP.companyId).update({salesHeadPassword:pass}).then(()=>{
-      APP.companyData.salesHeadPassword = pass;
-      showToast('Sales Head password saved','success');
-      renderAdminSubscription();
-    });
-  });
-  if(c.salesHeadPassword){
-    $('#copyShLinkBtn').addEventListener('click', ()=>{
-      navigator.clipboard.writeText($('#shLinkInput').value).then(()=> showToast('Link copied','success'));
-    });
-  }
 }
 
 /* ============================================================
@@ -232,6 +200,7 @@ function renderAdminMaster(){
     <div class="section-header">
       <h2>Outlet &amp; Salesman Master</h2>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-outline" id="linksHeadsBtn">🔗 Links &amp; Sales Heads</button>
         <button class="btn btn-outline" id="exportMasterBtn">⬇ Export Excel</button>
         <button class="btn btn-outline" id="importMasterBtn">⬆ Import Excel/CSV</button>
         <button class="btn btn-accent" id="addOutletBtn">+ Add Outlet</button>
@@ -253,20 +222,12 @@ function renderAdminMaster(){
         <p>Add an outlet manually or import from Excel/CSV.</p>
       </div>
     </div>
-    <div class="card">
-      <div class="card-title">Salesman Order Links <span class="muted">— share each salesman's own pre-filled link</span></div>
-      <div id="salesmanLinksList"></div>
-    </div>
-    <div class="card">
-      <div class="card-title">Sales Head Visibility <span class="muted">— which salesmen's data the Sales Head can see/manage</span></div>
-      <div id="salesHeadScopeList"></div>
-      <button class="btn btn-accent btn-sm" id="saveShScopeBtn" style="margin-top:10px;">Save</button>
-    </div>
   `;
 
   $('#addOutletBtn').addEventListener('click', ()=> openOutletModal(null));
   $('#exportMasterBtn').addEventListener('click', exportMasterExcel);
   $('#importMasterBtn').addEventListener('click', ()=> openMasterImportModal());
+  $('#linksHeadsBtn').addEventListener('click', ()=> openLinksAndHeadsModal());
   $('#masterSearch').addEventListener('input', renderMasterTable);
   $('#masterSalesmanFilter').addEventListener('change', renderMasterTable);
 
@@ -281,71 +242,118 @@ function renderAdminMaster(){
       filter.innerHTML = '<option value="">All Salesmen</option>' + salesmen.map(s=>`<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
       filter.value = cur;
       renderMasterTable();
-      renderSalesmanLinks(salesmen);
-      renderSalesHeadScope(salesmen);
     });
   APP.unsub.push(unsub);
 }
 
-function renderSalesHeadScope(salesmen){
-  const wrap = $('#salesHeadScopeList');
-  if(!wrap) return;
-  if(!salesmen || salesmen.length===0){
-    wrap.innerHTML = `<p class="helper-text">No salesmen found yet.</p>`;
-    $('#saveShScopeBtn').classList.add('hidden');
-    return;
-  }
-  $('#saveShScopeBtn').classList.remove('hidden');
-  const current = APP.companyData.salesHeadSalesmen || []; // empty = all visible
-  wrap.innerHTML = `
-    <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;margin-bottom:8px;">
-      <input type="checkbox" id="shScopeAll" ${current.length===0?'checked':''}> All Salesmen (no restriction)
-    </label>
-    <div id="shScopeIndividual" style="${current.length===0?'opacity:.5;':''}">
-      ${salesmen.map(sm=>`
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0;">
-          <input type="checkbox" class="sh-scope-item" value="${escapeHtml(sm)}" ${current.includes(sm)?'checked':''} ${current.length===0?'disabled':''}>
-          ${escapeHtml(sm)}
-        </label>`).join('')}
-    </div>
-  `;
-  $('#shScopeAll').addEventListener('change', e=>{
-    const checked = e.target.checked;
-    $('#shScopeIndividual').style.opacity = checked?'.5':'1';
-    $all('.sh-scope-item').forEach(cb=> cb.disabled = checked);
-  });
-  $('#saveShScopeBtn').onclick = ()=>{
-    const all = $('#shScopeAll').checked;
-    const selected = all ? [] : $all('.sh-scope-item').filter(cb=>cb.checked).map(cb=>cb.value);
-    DB.collection('companies').doc(APP.companyId).update({salesHeadSalesmen:selected}).then(()=>{
-      APP.companyData.salesHeadSalesmen = selected;
-      showToast('Sales Head visibility updated','success');
+/* ============================================================
+   LINKS & SALES HEADS MODAL
+============================================================ */
+function openLinksAndHeadsModal(){
+  const salesmen = [...new Set((APP.outlets||[]).map(o=>o.salesmanName).filter(Boolean))].sort();
+  let heads = JSON.parse(JSON.stringify(APP.companyData.salesHeads || []));
+
+  const render = ()=>{
+    const base = location.origin + location.pathname;
+    const token = APP.companyData.employeeToken;
+
+    const linksHtml = salesmen.length ? salesmen.map(sm=>{
+      const link = `${base}?view=order&token=${token}&sm=${encodeURIComponent(sm)}`;
+      return `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);">
+          <span style="font-weight:600;font-size:13px;">${escapeHtml(sm)}</span>
+          <button class="btn btn-outline btn-sm" data-link="${link}">Copy Link</button>
+        </div>`;
+    }).join('') : `<p class="helper-text">No salesmen found yet — add outlets with salesman names first.</p>`;
+
+    const headsHtml = heads.map((h,idx)=>{
+      const link = h.id ? `${base}?view=saleshead&company=${APP.companyId}&head=${h.id}` : '';
+      const allChecked = !h.salesmen || h.salesmen.length===0;
+      return `
+      <div class="card" style="margin-bottom:10px;">
+        <div class="input-row">
+          <div class="field"><label>Name</label><input class="input sh-name" data-idx="${idx}" value="${escapeHtml(h.name||'')}" placeholder="e.g. Mr. Sen"></div>
+          <div class="field"><label>Password</label><input class="input sh-pass" data-idx="${idx}" value="${escapeHtml(h.password||'')}" placeholder="Set password"></div>
+        </div>
+        <div class="helper-text" style="margin-bottom:6px;">Visible Salesmen</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;margin-bottom:4px;">
+          <input type="checkbox" class="sh-all" data-idx="${idx}" ${allChecked?'checked':''}> All Salesmen (no restriction)
+        </label>
+        <div class="sh-individual" data-idx="${idx}" style="display:flex;flex-wrap:wrap;gap:10px;${allChecked?'opacity:.5;':''}">
+          ${salesmen.map(sm=>`
+            <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;">
+              <input type="checkbox" class="sh-item" data-idx="${idx}" value="${escapeHtml(sm)}" ${(h.salesmen||[]).includes(sm)?'checked':''} ${allChecked?'disabled':''}>
+              ${escapeHtml(sm)}
+            </label>`).join('')}
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+          ${link ? `<button class="btn btn-outline btn-sm sh-copy" data-link="${link}">Copy Login Link</button>` : '<span class="helper-text">Save to generate login link</span>'}
+          <button class="btn btn-danger btn-sm sh-del" data-idx="${idx}">Delete</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    openModal(`
+      <h3>Links &amp; Sales Heads</h3>
+      <div class="card-title" style="margin-top:0;">Salesman Order Links</div>
+      <div style="margin-bottom:16px;">${linksHtml}</div>
+      <div class="divider"></div>
+      <div class="card-title">Sales Heads <span class="muted">— add one per supervisor</span></div>
+      <div id="shHeadsList">${headsHtml}</div>
+      <button class="btn btn-outline btn-sm" id="addShHeadBtn" style="margin-bottom:14px;">+ Add Sales Head</button>
+      <div class="divider"></div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-accent" id="saveLinksHeadsBtn">Save</button>
+        <button class="btn btn-outline" id="closeLinksHeadsBtn">Close</button>
+      </div>
+    `);
+
+    $all('[data-link]').forEach(btn=>{
+      btn.addEventListener('click', ()=> navigator.clipboard.writeText(btn.dataset.link).then(()=> showToast('Link copied','success')));
+    });
+    $('#closeLinksHeadsBtn').addEventListener('click', closeModal);
+
+    $('#addShHeadBtn').addEventListener('click', ()=>{
+      heads.push({id: uid('sh_'), name:'New Sales Head', password:'', salesmen:[]});
+      render();
+    });
+
+    $all('.sh-all').forEach(cb=>{
+      cb.addEventListener('change', e=>{
+        const idx = e.target.dataset.idx;
+        const box = document.querySelector(`.sh-individual[data-idx="${idx}"]`);
+        box.style.opacity = e.target.checked ? '.5' : '1';
+        box.querySelectorAll('.sh-item').forEach(item=> item.disabled = e.target.checked);
+      });
+    });
+
+    $all('.sh-del').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        if(confirm('Delete this Sales Head? Their login link will stop working.')){
+          heads.splice(Number(btn.dataset.idx),1);
+          render();
+        }
+      });
+    });
+
+    $('#saveLinksHeadsBtn').addEventListener('click', ()=>{
+      // read current input values back into `heads`
+      $all('.sh-name').forEach(inp=> heads[inp.dataset.idx].name = inp.value.trim());
+      $all('.sh-pass').forEach(inp=> heads[inp.dataset.idx].password = inp.value.trim());
+      $all('.sh-all').forEach(cb=>{
+        const idx = cb.dataset.idx;
+        if(cb.checked) heads[idx].salesmen = [];
+        else heads[idx].salesmen = $all(`.sh-item[data-idx="${idx}"]`).filter(c=>c.checked).map(c=>c.value);
+      });
+      DB.collection('companies').doc(APP.companyId).update({salesHeads:heads}).then(()=>{
+        APP.companyData.salesHeads = heads;
+        showToast('Saved','success');
+        render(); // re-render to show generated links for new heads
+      });
     });
   };
-}
 
-function renderSalesmanLinks(salesmen){
-  const wrap = $('#salesmanLinksList');
-  if(!wrap) return;
-  if(!salesmen || salesmen.length===0){
-    wrap.innerHTML = `<p class="helper-text">No salesmen found yet — add outlets with salesman names above.</p>`;
-    return;
-  }
-  const base = location.origin + location.pathname;
-  const token = APP.companyData.employeeToken;
-  wrap.innerHTML = salesmen.map(sm=>{
-    const link = `${base}?view=order&token=${token}&sm=${encodeURIComponent(sm)}`;
-    return `
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);">
-        <span style="font-weight:600;font-size:13px;">${escapeHtml(sm)}</span>
-        <button class="btn btn-outline btn-sm" data-link="${link}">Copy Link</button>
-      </div>`;
-  }).join('');
-  wrap.querySelectorAll('[data-link]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      navigator.clipboard.writeText(btn.dataset.link).then(()=> showToast('Link copied','success'));
-    });
-  });
+  render();
 }
 
 function renderMasterTable(){
@@ -915,15 +923,10 @@ let adminOrderSalesman = '';
 function renderAdminOrders(){
   const content = $('#pageContent');
   content.innerHTML = `
-    <div class="section-header">
-      <h2>Orders</h2>
-    </div>
+    <div class="section-header"></div>
     <div class="pill-tabs" id="orderBrandTabs"></div>
     <div class="pill-tabs" id="orderStatusTabs">
-      <button class="pill-tab" data-s="all">All</button>
-      <button class="pill-tab" data-s="pending">Pending</button>
-      <button class="pill-tab" data-s="partial">Partial</button>
-      <button class="pill-tab" data-s="billed">Billed</button>
+      ${ORDER_STATUS_PILLS.map(p=>`<button class="pill-tab" data-s="${p.key}">${p.label}</button>`).join('')}
     </div>
     <div class="card">
       <div class="input-row" style="margin-bottom:12px;">
@@ -931,7 +934,7 @@ function renderAdminOrders(){
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Date</th><th>Outlet</th><th>Salesman</th><th>Brand</th><th>Items</th><th>Total</th><th>Approval</th><th>Status</th><th></th></tr></thead>
+          <thead><tr><th>Date</th><th>Outlet</th><th>Salesman</th><th>Brand</th><th>Items</th><th>Total</th><th>Outstanding</th><th>Status</th><th>Action</th></tr></thead>
           <tbody id="ordersTbody"></tbody>
         </table>
       </div>
@@ -960,6 +963,8 @@ function renderAdminOrders(){
       renderOrdersTable();
     });
   APP.unsub.push(unsub);
+
+  loadApprovalsOutstanding(APP.companyId).then(()=> renderOrdersTable());
 }
 
 function renderOrderBrandTabs(){
@@ -985,23 +990,26 @@ function renderSalesmanFilterOptions(){
 function renderOrdersTable(){
   let list = APP.orders || [];
   if(adminOrderBrand!=='all') list = list.filter(o=>o.brand===adminOrderBrand);
-  if(adminOrderStatus!=='all') list = list.filter(o=>o.status===adminOrderStatus);
+  if(adminOrderStatus!=='all') list = list.filter(o=> getOrderDisplayStatus(o).key===adminOrderStatus);
   if(adminOrderSalesman) list = list.filter(o=>o.salesmanName===adminOrderSalesman);
 
   const tbody = $('#ordersTbody');
   const emptyEl = $('#ordersEmpty');
+  if(!tbody) return;
   if(list.length===0){ tbody.innerHTML=''; emptyEl.classList.remove('hidden'); return; }
   emptyEl.classList.add('hidden');
 
   tbody.innerHTML = list.map(o=>{
-    const ap = o.approvalStatus !== undefined ? o.approvalStatus : 'approved';
-    const apBadge = ap==='approved' ? '<span class="badge badge-green">Approved</span>'
-                  : ap==='rejected' ? '<span class="badge badge-red">Rejected</span>'
-                  : '<span class="badge badge-amber">Pending Approval</span>';
-    let billBtn;
-    if(ap==='rejected') billBtn = '';
-    else if(ap==='pending') billBtn = `<button class="btn btn-outline btn-sm" disabled title="Awaiting Sales Head approval">Bill</button>`;
-    else billBtn = `<button class="btn btn-outline btn-sm" data-bill="${o.id}">${o.status==='billed'?'View':'Bill'}</button>`;
+    const ds = getOrderDisplayStatus(o);
+    const os = approvalsOutstandingMap[o.outletId];
+    let actionBtn;
+    if(ds.key==='pending_approval'){
+      actionBtn = `<button class="btn btn-success btn-sm" data-approve="${o.id}">Approve</button> <button class="btn btn-danger btn-sm" data-reject="${o.id}">Reject</button>`;
+    } else if(ds.key==='rejected'){
+      actionBtn = o.rejectionReason ? `<span class="helper-text">${escapeHtml(o.rejectionReason)}</span>` : '';
+    } else {
+      actionBtn = `<button class="btn btn-outline btn-sm" data-bill="${o.id}">${o.status==='billed'?'View':'Bill'}</button>`;
+    }
     return `
     <tr class="status-${o.status}">
       <td>${fmtDateDisplay(o.date)}</td>
@@ -1010,10 +1018,10 @@ function renderOrdersTable(){
       <td><span class="badge badge-blue">${escapeHtml(o.brand)}</span></td>
       <td>${o.items.length}</td>
       <td>${fmtINR(o.totalValue)}</td>
-      <td>${apBadge}</td>
-      <td><span class="badge badge-${o.status==='billed'?'green':o.status==='partial'?'blue':'amber'}">${o.status}</span></td>
-      <td style="display:flex;gap:6px;">
-        ${billBtn}
+      <td>${os ? fmtINR(os.os) : '—'}</td>
+      <td><span class="badge badge-${ds.color}">${ds.label}</span></td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${actionBtn}
         ${o.isNewOutlet?`<button class="btn btn-accent btn-sm" data-resolve="${o.id}">Resolve Outlet</button>`:''}
       </td>
     </tr>
@@ -1024,6 +1032,12 @@ function renderOrdersTable(){
   });
   tbody.querySelectorAll('[data-resolve]').forEach(b=>{
     b.addEventListener('click', ()=> openResolveOutletModal(APP.orders.find(o=>o.id===b.dataset.resolve)));
+  });
+  tbody.querySelectorAll('[data-approve]').forEach(b=>{
+    b.addEventListener('click', ()=> approveOrder(APP.companyId, APP.orders.find(o=>o.id===b.dataset.approve)));
+  });
+  tbody.querySelectorAll('[data-reject]').forEach(b=>{
+    b.addEventListener('click', ()=> rejectOrder(APP.companyId, APP.orders.find(o=>o.id===b.dataset.reject)));
   });
 }
 
@@ -2049,23 +2063,4 @@ function exportMasterExcel(){
   const blob = new Blob([html], {type:'application/vnd.ms-excel'});
   downloadBlob(blob, `SunStar-OCM-Master-${todayStr()}.xls`);
   showToast('Master exported','success');
-}
-
-/* ============================================================
-   APPROVALS TAB (Admin)
-============================================================ */
-function renderAdminApprovals(){
-  const content = $('#pageContent');
-  content.innerHTML = `<div id="apprPanel"></div>`;
-
-  let liveOrders = [];
-  const unsub = DB.collection('companies').doc(APP.companyId).collection('orders')
-    .orderBy('createdAt','desc').limit(300).onSnapshot(snap=>{
-      liveOrders=[];
-      snap.forEach(d=> liveOrders.push(Object.assign({id:d.id}, d.data())));
-      renderApprovalsList(APP.companyId, liveOrders);
-    });
-  APP.unsub.push(unsub);
-
-  initApprovalsPanel('#apprPanel', APP.companyId, ()=>liveOrders);
 }

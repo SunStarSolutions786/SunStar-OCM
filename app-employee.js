@@ -159,7 +159,6 @@ function renderEmpTab(){
   if(empActiveTab==='order') renderEmpOrderTab();
   else if(empActiveTab==='collection') renderEmpCollectionTab();
   else if(empActiveTab==='reports') renderEmpReportsTab();
-  else if(empActiveTab==='approvals') renderShApprovalsTab();
   else renderEmpMyOrdersTab();
 }
 
@@ -391,6 +390,14 @@ function submitOrder(){
 let empOrdersFilter = 'all';
 
 let empOrdersSalesmanFilter = '';
+const ORDER_STATUS_PILLS = [
+  {key:'all', label:'All'},
+  {key:'pending_approval', label:'Pending Approval'},
+  {key:'ready', label:'Ready for Billing'},
+  {key:'partial', label:'Partial'},
+  {key:'billed', label:'Billed'},
+  {key:'rejected', label:'Rejected'}
+];
 
 function renderEmpMyOrdersTab(){
   const bar = $('#empCartBar'); if(bar) bar.remove();
@@ -398,10 +405,7 @@ function renderEmpMyOrdersTab(){
   const isSH = APP.role==='saleshead';
   content.innerHTML = `
     <div class="pill-tabs" id="empOrderStatusTabs">
-      <button class="pill-tab ${empOrdersFilter==='all'?'active':''}" data-f="all">All</button>
-      <button class="pill-tab ${empOrdersFilter==='pending'?'active':''}" data-f="pending">Pending</button>
-      <button class="pill-tab ${empOrdersFilter==='partial'?'active':''}" data-f="partial">Partial</button>
-      <button class="pill-tab ${empOrdersFilter==='billed'?'active':''}" data-f="billed">Billed</button>
+      ${ORDER_STATUS_PILLS.map(p=>`<button class="pill-tab ${empOrdersFilter===p.key?'active':''}" data-f="${p.key}">${p.label}</button>`).join('')}
     </div>
     ${isSH ? `<div class="field"><select class="input" id="empOrdersSalesmanFilter"><option value="">All Salesmen</option></select></div>` : ''}
     <div id="empOrdersList"><div class="spinner"></div></div>
@@ -413,9 +417,10 @@ function renderEmpMyOrdersTab(){
     $('#empOrdersSalesmanFilter').addEventListener('change', e=>{ empOrdersSalesmanFilter=e.target.value; renderEmpMyOrdersTab(); });
   }
 
-  let query = DB.collection('companies').doc(APP.companyId).collection('orders');
-  if(!isSH) query = query.where('salesmanName','==',APP.salesman);
-  query.orderBy('createdAt','desc').limit(isSH?300:100).get().then(snap=>{
+  const proceed = ()=>{
+    let query = DB.collection('companies').doc(APP.companyId).collection('orders');
+    if(!isSH) query = query.where('salesmanName','==',APP.salesman);
+    query.orderBy('createdAt','desc').limit(isSH?300:100).get().then(snap=>{
       let orders=[];
       snap.forEach(d=> orders.push(Object.assign({id:d.id}, d.data())));
       if(isSH){
@@ -427,25 +432,58 @@ function renderEmpMyOrdersTab(){
         sel.value = cur;
         if(empOrdersSalesmanFilter) orders = orders.filter(o=>o.salesmanName===empOrdersSalesmanFilter);
       }
-      if(empOrdersFilter!=='all') orders = orders.filter(o=>o.status===empOrdersFilter);
+      if(empOrdersFilter!=='all') orders = orders.filter(o=> getOrderDisplayStatus(o).key===empOrdersFilter);
       const listEl = $('#empOrdersList');
       if(orders.length===0){
         listEl.innerHTML = `<div class="empty-state"><div class="es-icon">📋</div><h4>No orders found</h4></div>`;
         return;
       }
-      listEl.innerHTML = orders.map(o=>`
-        <div class="list-card ${o.status}">
+      listEl.innerHTML = orders.map(o=>{
+        const ds = getOrderDisplayStatus(o);
+        const os = isSH ? approvalsOutstandingMap[o.outletId] : null;
+        let extra = '';
+        if(ds.key==='pending_approval'){
+          if(os){
+            extra += `<div class="lc-meta" style="margin-top:4px;">Outstanding: <b>${fmtINR(os.os)}</b> · Plan: ${fmtINR(os.plan)} · Received: ${fmtINR(os.received)}</div>`;
+          }
+          if(isSH){
+            extra += `<div style="display:flex;gap:8px;margin-top:8px;">
+              <button class="btn btn-success btn-sm" data-approve="${o.id}">✓ Approve</button>
+              <button class="btn btn-danger btn-sm" data-reject="${o.id}">✕ Reject</button>
+            </div>`;
+          } else {
+            extra += `<div class="helper-text" style="margin-top:4px;">Awaiting Sales Head approval</div>`;
+          }
+        } else if(ds.key==='rejected' && o.rejectionReason){
+          extra += `<div class="helper-text" style="margin-top:4px;">Reason: ${escapeHtml(o.rejectionReason)}</div>`;
+        }
+        return `
+        <div class="list-card ${ds.key==='billed'?'billed':ds.key==='rejected'?'rejected':ds.key==='partial'||ds.key==='ready'?'partial':'pending'}">
           <div class="lc-top">
             <div>
               <div class="lc-title">${escapeHtml(o.outletName)}</div>
               <div class="lc-meta">${fmtDateDisplay(o.date)} · ${isSH?escapeHtml(o.salesmanName)+' · ':''}${escapeHtml(o.brand)} · ${o.items.length} item(s)</div>
             </div>
-            <span class="badge badge-${o.status==='billed'?'green':o.status==='partial'?'blue':'amber'}">${o.status}</span>
+            <span class="badge badge-${ds.color}">${ds.label}</span>
           </div>
           <div style="font-weight:700;margin-top:6px;">${fmtINR(o.totalValue)}</div>
-        </div>
-      `).join('');
+          ${extra}
+        </div>`;
+      }).join('');
+
+      if(isSH){
+        listEl.querySelectorAll('[data-approve]').forEach(btn=>{
+          btn.addEventListener('click', ()=> approveOrder(APP.companyId, orders.find(o=>o.id===btn.dataset.approve)));
+        });
+        listEl.querySelectorAll('[data-reject]').forEach(btn=>{
+          btn.addEventListener('click', ()=> rejectOrder(APP.companyId, orders.find(o=>o.id===btn.dataset.reject)));
+        });
+      }
     });
+  };
+
+  if(isSH) loadApprovalsOutstanding(APP.companyId).then(proceed);
+  else proceed();
 }
 
 /* ============================================================
