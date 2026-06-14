@@ -369,3 +369,60 @@ function rejectOrder(companyId, order){
   }).then(()=> showToast('Order rejected — stock restored','success'))
     .catch(err=> showToast('Error: '+err.message,'error'));
 }
+
+/* ============================================================
+   SHARED — Order Item-wise Detail Modal
+   (used by Admin Orders, Employee My Orders, Sales Head Orders)
+============================================================ */
+function openOrderItemsModal(order){
+  const ds = getOrderDisplayStatus(order);
+  const showBilled = order.status==='partial' || order.status==='billed';
+
+  const rows = (order.items||[]).map(it=>{
+    const value = (it.orderedQty||0)*(it.rate||0);
+    const billedValue = (it.billedQty||0)*(it.rate||0);
+    return `
+      <tr>
+        <td>${escapeHtml(it.itemName)}</td>
+        <td style="text-align:center;">${it.orderedQty}</td>
+        <td style="text-align:right;">${fmtINR(it.rate)}</td>
+        <td style="text-align:right;">${fmtINR(value)}</td>
+        ${showBilled ? `<td style="text-align:center;">${it.billedQty||0}</td><td style="text-align:right;">${fmtINR(billedValue)}</td>` : ''}
+      </tr>`;
+  }).join('');
+
+  const totalQty = (order.items||[]).reduce((s,i)=>s+(i.orderedQty||0),0);
+  const totalValue = order.totalValue || (order.items||[]).reduce((s,i)=>s+(i.orderedQty||0)*(i.rate||0),0);
+  const totalBilledQty = (order.items||[]).reduce((s,i)=>s+(i.billedQty||0),0);
+  const totalBilledValue = (order.items||[]).reduce((s,i)=>s+(i.billedQty||0)*(i.rate||0),0);
+
+  openModal(`
+    <h3>${escapeHtml(order.outletName)} — Item Details</h3>
+    <div class="helper-text" style="margin-bottom:10px;">
+      ${fmtDateDisplay(order.date)} · ${escapeHtml(order.salesmanName)} · ${escapeHtml(order.brand)}
+      &nbsp; <span class="badge badge-${ds.color}">${ds.label}</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Item</th><th>Qty</th><th>Rate</th><th>Value</th>
+          ${showBilled ? `<th>Billed Qty</th><th>Billed Value</th>` : ''}
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr style="font-weight:700;">
+            <td>Total</td>
+            <td style="text-align:center;">${fmtNum(totalQty)}</td>
+            <td></td>
+            <td style="text-align:right;">${fmtINR(totalValue)}</td>
+            ${showBilled ? `<td style="text-align:center;">${fmtNum(totalBilledQty)}</td><td style="text-align:right;">${fmtINR(totalBilledValue)}</td>` : ''}
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div style="margin-top:14px;">
+      <button class="btn btn-outline" id="closeOrderItemsBtn">Close</button>
+    </div>
+  `);
+  $('#closeOrderItemsBtn').addEventListener('click', closeModal);
+}

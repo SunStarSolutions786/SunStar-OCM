@@ -466,10 +466,17 @@ function renderEmpMyOrdersTab(){
             </div>
             <span class="badge badge-${ds.color}">${ds.label}</span>
           </div>
-          <div style="font-weight:700;margin-top:6px;">${fmtINR(o.totalValue)}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+            <div style="font-weight:700;">${fmtINR(o.totalValue)}</div>
+            <button class="btn btn-outline btn-sm" data-items="${o.id}">Items</button>
+          </div>
           ${extra}
         </div>`;
       }).join('');
+
+      listEl.querySelectorAll('[data-items]').forEach(btn=>{
+        btn.addEventListener('click', ()=> openOrderItemsModal(orders.find(o=>o.id===btn.dataset.items)));
+      });
 
       if(isSH){
         listEl.querySelectorAll('[data-approve]').forEach(btn=>{
@@ -607,7 +614,8 @@ function renderEmpCollList(){
    MY REPORTS TAB (Employee)
 ============================================================ */
 let empRepRange = 'month';
-
+let empRepFrom = todayStr();
+let empRepTo = todayStr();
 let empRepSalesmanFilter = '';
 
 function renderEmpReportsTab(){
@@ -619,12 +627,26 @@ function renderEmpReportsTab(){
       <button class="pill-tab" data-r="today">Today</button>
       <button class="pill-tab" data-r="week">This Week</button>
       <button class="pill-tab" data-r="month">This Month</button>
+      <button class="pill-tab" data-r="custom">Custom</button>
+    </div>
+    <div class="card hidden" id="empRepCustomCard">
+      <div class="input-row">
+        <div class="field"><label>From</label><input type="date" class="input" id="empRepFromInput" value="${empRepFrom}"></div>
+        <div class="field"><label>To</label><input type="date" class="input" id="empRepToInput" value="${empRepTo}"></div>
+      </div>
+      <button class="btn btn-accent btn-block" id="empRepCustomGo">Apply</button>
     </div>
     ${isSH ? `<div class="field"><select class="input" id="empRepSalesmanFilter"><option value="">All Salesmen</option></select></div>` : ''}
     <div class="grid grid-2" id="empRepKpis"><div class="spinner"></div></div>
     <div class="card">
-      <div class="card-title">Order Status Breakdown</div>
-      <div id="empRepStatus"></div>
+      <div class="card-title">Date-wise Summary</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Orders</th><th>Order Value</th><th>Billed Value</th><th>Plan</th><th>Received</th></tr></thead>
+          <tbody id="empRepDateTbody"></tbody>
+          <tfoot id="empRepDateTfoot"></tfoot>
+        </table>
+      </div>
     </div>
   `;
   $all('#empRepRangeTabs .pill-tab').forEach(b=>{
@@ -632,8 +654,13 @@ function renderEmpReportsTab(){
     b.addEventListener('click', ()=>{
       empRepRange=b.dataset.r;
       $all('#empRepRangeTabs .pill-tab').forEach(x=>x.classList.toggle('active', x===b));
-      loadEmpReports();
+      $('#empRepCustomCard').classList.toggle('hidden', empRepRange!=='custom');
+      if(empRepRange!=='custom') loadEmpReports();
     });
+  });
+  $('#empRepCustomCard').classList.toggle('hidden', empRepRange!=='custom');
+  $('#empRepCustomGo').addEventListener('click', ()=>{
+    empRepFrom=$('#empRepFromInput').value; empRepTo=$('#empRepToInput').value; loadEmpReports();
   });
   if(isSH){
     $('#empRepSalesmanFilter').addEventListener('change', e=>{ empRepSalesmanFilter=e.target.value; loadEmpReports(); });
@@ -644,7 +671,9 @@ function renderEmpReportsTab(){
 async function loadEmpReports(){
   $('#empRepKpis').innerHTML = '<div class="spinner"></div>';
   try{
-  const {from,to} = getRangeDates(empRepRange);
+  const range = getRangeDates(empRepRange==='custom' ? 'custom' : empRepRange);
+  const from = empRepRange==='custom' ? empRepFrom : range.from;
+  const to = empRepRange==='custom' ? empRepTo : range.to;
   const isSH = APP.role==='saleshead';
 
   let oQuery = DB.collection('companies').doc(APP.companyId).collection('orders');
@@ -655,11 +684,10 @@ async function loadEmpReports(){
   const outSnap = await DB.collection('companies').doc(APP.companyId).collection('outstanding')
     .where(firebase.firestore.FieldPath.documentId(),'>=',from)
     .where(firebase.firestore.FieldPath.documentId(),'<=',to).get();
+  let outDocs=[]; outSnap.forEach(d=>outDocs.push(Object.assign({id:d.id}, d.data())));
 
-  let plan=0, received=0;
   if(isSH){
     orders = orders.filter(o=> inSalesHeadScope(o.salesmanName));
-    // populate salesman dropdown from scope (or all outlets' salesmen)
     const sel = $('#empRepSalesmanFilter');
     if(sel){
       const allSalesmen = [...new Set((APP.outlets||[]).map(o=>o.salesmanName).filter(Boolean))].filter(inSalesHeadScope).sort();
@@ -668,32 +696,60 @@ async function loadEmpReports(){
       sel.value = cur;
     }
     if(empRepSalesmanFilter) orders = orders.filter(o=>o.salesmanName===empRepSalesmanFilter);
-    outSnap.forEach(d=> Object.values(d.data().outlets||{}).forEach(o=>{
-      if(!inSalesHeadScope(o.salesmanName)) return;
-      if(empRepSalesmanFilter && o.salesmanName!==empRepSalesmanFilter) return;
-      plan+=Number(o.plan)||0; received+=Number(o.received)||0;
-    }));
-  } else {
-    outSnap.forEach(d=> Object.values(d.data().outlets||{}).forEach(o=>{
-      if(o.salesmanName===APP.salesman){ plan+=Number(o.plan)||0; received+=Number(o.received)||0; }
-    }));
   }
 
-  const totalValue = orders.reduce((s,o)=>s+(o.totalValue||0),0);
-  const pending = orders.filter(o=>o.status==='pending').length;
-  const partial = orders.filter(o=>o.status==='partial').length;
-  const billed = orders.filter(o=>o.status==='billed').length;
+  // ---- Date-wise aggregation ----
+  const dateMap = {};
+  const ensureDate = (d)=>{
+    if(!dateMap[d]) dateMap[d] = {orders:0, orderValue:0, billingValue:0, plan:0, received:0};
+    return dateMap[d];
+  };
+  orders.forEach(o=>{
+    const row = ensureDate(o.date);
+    row.orders++; row.orderValue += o.totalValue||0;
+    (o.items||[]).forEach(it=>{ row.billingValue += (it.billedQty||0)*(it.rate||0); });
+  });
+  outDocs.forEach(d=>{
+    Object.values(d.outlets||{}).forEach(o=>{
+      if(isSH){
+        if(!inSalesHeadScope(o.salesmanName)) return;
+        if(empRepSalesmanFilter && o.salesmanName!==empRepSalesmanFilter) return;
+      } else {
+        if(o.salesmanName!==APP.salesman) return;
+      }
+      const row = ensureDate(d.id);
+      row.plan += Number(o.plan)||0; row.received += Number(o.received)||0;
+    });
+  });
+  const dates = Object.keys(dateMap).sort();
 
+  let totalOrderValue=0, totalBilledValue=0, totalOrders=0, totalPlan=0, totalReceived=0;
+  const dateRows = dates.map(d=>{
+    const r = dateMap[d];
+    totalOrders += r.orders; totalOrderValue += r.orderValue;
+    totalBilledValue += r.billingValue; totalPlan += r.plan; totalReceived += r.received;
+    return `<tr>
+      <td>${fmtDateDisplay(d)}</td>
+      <td>${r.orders}</td>
+      <td>${fmtINR(r.orderValue)}</td>
+      <td>${fmtINR(r.billingValue)}</td>
+      <td>${fmtINR(r.plan)}</td>
+      <td>${fmtINR(r.received)}</td>
+    </tr>`;
+  }).join('');
+  $('#empRepDateTbody').innerHTML = dateRows || `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);">No data for this period</td></tr>`;
+  $('#empRepDateTfoot').innerHTML = dates.length ? `
+    <tr style="font-weight:700;background:var(--bg);">
+      <td>Total</td><td>${totalOrders}</td><td>${fmtINR(totalOrderValue)}</td>
+      <td>${fmtINR(totalBilledValue)}</td><td>${fmtINR(totalPlan)}</td><td>${fmtINR(totalReceived)}</td>
+    </tr>` : '';
+
+  const collectionPending = Math.max(0, totalPlan-totalReceived);
   $('#empRepKpis').innerHTML = `
-    <div class="kpi blue"><div class="label">Order Value</div><div class="value">${fmtINR(totalValue)}</div><div class="sub">${orders.length} order(s)</div></div>
-    <div class="kpi green"><div class="label">Collection</div><div class="value">${fmtINR(received)}</div><div class="sub">Plan: ${fmtINR(plan)}</div></div>
-  `;
-  $('#empRepStatus').innerHTML = `
-    <div style="display:flex;gap:10px;flex-wrap:wrap;">
-      <span class="badge badge-amber">Pending: ${pending}</span>
-      <span class="badge badge-blue">Partial: ${partial}</span>
-      <span class="badge badge-green">Billed: ${billed}</span>
-    </div>
+    <div class="kpi blue"><div class="label">Order</div><div class="value">${fmtINR(totalOrderValue)}</div><div class="sub">${totalOrders} order(s)</div></div>
+    <div class="kpi green"><div class="label">Billing</div><div class="value">${fmtINR(totalBilledValue)}</div></div>
+    <div class="kpi green"><div class="label">Collection</div><div class="value">${fmtINR(totalReceived)}</div><div class="sub">Plan: ${fmtINR(totalPlan)}</div></div>
+    <div class="kpi red"><div class="label">Collection Pending</div><div class="value">${fmtINR(collectionPending)}</div></div>
   `;
   } catch(err){
     console.error('Employee reports load error:', err);
@@ -701,6 +757,7 @@ async function loadEmpReports(){
       <div class="empty-state" style="grid-column:1/-1;">
         <div class="es-icon">⚠️</div><h4>Could not load reports</h4><p>${escapeHtml(err.message)}</p>
       </div>`;
-    $('#empRepStatus').innerHTML = '';
+    $('#empRepDateTbody').innerHTML = '';
+    $('#empRepDateTfoot').innerHTML = '';
   }
 }

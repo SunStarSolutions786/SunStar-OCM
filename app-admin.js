@@ -495,6 +495,7 @@ function renderAdminStock(){
       <h2>Stock Management</h2>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-outline" id="manageBrandsBtn">🗂️ Manage Brands</button>
+        <button class="btn btn-outline" id="exportStockBtn">⬇ Export Excel</button>
         <button class="btn btn-outline" id="importStockBtn">⬆ Import Stock</button>
         <button class="btn btn-accent" id="addItemBtn">+ Add Item</button>
       </div>
@@ -525,6 +526,7 @@ function renderAdminStock(){
     openStockImportModal();
   });
   $('#manageBrandsBtn').addEventListener('click', ()=> openManageBrandsModal());
+  $('#exportStockBtn').addEventListener('click', exportStockExcel);
   $('#stockSearch').addEventListener('input', renderStockTable);
 
   const unsub1 = DB.collection('companies').doc(APP.companyId).collection('items')
@@ -1022,6 +1024,7 @@ function renderOrdersTable(){
       <td><span class="badge badge-${ds.color}">${ds.label}</span></td>
       <td style="display:flex;gap:6px;flex-wrap:wrap;">
         ${actionBtn}
+        <button class="btn btn-outline btn-sm" data-items="${o.id}">Items</button>
         ${o.isNewOutlet?`<button class="btn btn-accent btn-sm" data-resolve="${o.id}">Resolve Outlet</button>`:''}
       </td>
     </tr>
@@ -1029,6 +1032,9 @@ function renderOrdersTable(){
 
   tbody.querySelectorAll('[data-bill]').forEach(b=>{
     b.addEventListener('click', ()=> openBillingModal(APP.orders.find(o=>o.id===b.dataset.bill)));
+  });
+  tbody.querySelectorAll('[data-items]').forEach(b=>{
+    b.addEventListener('click', ()=> openOrderItemsModal(APP.orders.find(o=>o.id===b.dataset.items)));
   });
   tbody.querySelectorAll('[data-resolve]').forEach(b=>{
     b.addEventListener('click', ()=> openResolveOutletModal(APP.orders.find(o=>o.id===b.dataset.resolve)));
@@ -1149,7 +1155,6 @@ function renderAdminCollection(){
       <h2>Outstanding &amp; Collection Plan</h2>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-outline" id="uploadOSBtn">⬆ Upload Outstanding</button>
-        <button class="btn btn-outline" id="addOutletDateBtn">+ Add Outlet</button>
         <button class="btn btn-outline" id="shareSnapBtn">📤 Share</button>
         <button class="btn btn-outline" id="downloadSnapBtn">⬇ Download</button>
         <button class="btn btn-danger" id="finalizeBtn">Finalize Date</button>
@@ -1190,7 +1195,6 @@ function renderAdminCollection(){
     });
   });
   $('#uploadOSBtn').addEventListener('click', ()=> openOSUploadModal());
-  $('#addOutletDateBtn').addEventListener('click', ()=> openAddOutletToDateModal());
   $('#finalizeBtn').addEventListener('click', ()=> finalizeDate());
   $('#shareSnapBtn').addEventListener('click', ()=> shareSnapshot(true));
   $('#downloadSnapBtn').addEventListener('click', ()=> shareSnapshot(false));
@@ -1266,7 +1270,6 @@ function renderCollectionTable(){
 
   $('#finalizeBtn').disabled = isFinalized;
   $('#uploadOSBtn').disabled = isFinalized;
-  $('#addOutletDateBtn').disabled = isFinalized;
 
   const thead = $('#collTable thead');
   const tbody = $('#collTbody');
@@ -1396,39 +1399,6 @@ function openOSUploadModal(){
   });
 }
 
-/* ---------- Add single outlet to a date (ad-hoc) ---------- */
-function openAddOutletToDateModal(){
-  const doc = adminCollDoc || {outlets:{}};
-  const existingIds = Object.keys(doc.outlets||{});
-  const available = (APP.outlets||[]).filter(o=> !existingIds.includes(o.id));
-  if(available.length===0){ showToast('All outlets already added for this date','error'); return; }
-
-  openModal(`
-    <h3>Add Outlet — ${fmtDateDisplay(adminCollDate)}</h3>
-    <p class="helper-text" style="margin-bottom:12px;">
-      The outlet will be added with Outstanding = 0. You can then edit Outstanding, Plan and Received directly in the table.
-    </p>
-    <div class="field">
-      <label>Outlet</label>
-      <select class="input" id="addOutletSelect">
-        ${available.map(o=>`<option value="${o.id}">${escapeHtml(o.outletName)} (${escapeHtml(o.salesmanName||'—')})</option>`).join('')}
-      </select>
-    </div>
-    <div style="display:flex;gap:10px;">
-      <button class="btn btn-accent" id="confirmAddOutletDate">Add</button>
-      <button class="btn btn-outline" id="cancelAddOutletDate">Cancel</button>
-    </div>
-  `);
-  $('#cancelAddOutletDate').addEventListener('click', closeModal);
-  $('#confirmAddOutletDate').addEventListener('click', ()=>{
-    const outletId = $('#addOutletSelect').value;
-    const outlet = available.find(o=>o.id===outletId);
-    DB.collection('companies').doc(APP.companyId).collection('outstanding').doc(adminCollDate)
-      .set({status:'open', outlets:{[outletId]:{outletName:outlet.outletName, salesmanName:outlet.salesmanName||'', os:0, plan:0, received:0}}}, {merge:true})
-      .then(()=>{ showToast('Outlet added — edit values in the table','success'); closeModal(); loadCollectionDate(); });
-  });
-}
-
 /* ---------- Finalize ---------- */
 function finalizeDate(){
   if(!confirm(`Finalize ${fmtDateDisplay(adminCollDate)}? Outstanding values will be removed; Plan & Received history will be kept for outlets that have activity. This cannot be undone.`)) return;
@@ -1465,17 +1435,20 @@ function shareSnapshot(useShare){
     totalPending += (Number(o.os)||0)-(Number(o.received)||0);
   });
 
-  const rows = entries.map(([id,o])=>`
+  const rows = entries.map(([id,o])=>{
+    const pending = (Number(o.os)||0)-(Number(o.received)||0);
+    return `
     <tr>
       <td style="padding:6px 10px;border-bottom:1px solid #e3e6ee;">${escapeHtml(o.outletName)}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #e3e6ee;text-align:right;">${isFinalized?'—':fmtINR(o.os)}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #e3e6ee;text-align:right;">${fmtINR(o.plan)}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #e3e6ee;text-align:right;">${fmtINR(o.received)}</td>
-    </tr>`).join('');
+      <td style="padding:6px 10px;border-bottom:1px solid #e3e6ee;text-align:right;color:${pending>0?'#e5484d':'#2e9e5b'};font-weight:600;">${isFinalized?'—':fmtINR(pending)}</td>
+    </tr>`;}).join('');
 
   const area = $('#snapshotArea');
   area.innerHTML = `
-    <div style="width:480px;background:#fff;padding:20px;font-family:Inter,sans-serif;">
+    <div style="width:540px;background:#fff;padding:20px;font-family:Inter,sans-serif;">
       <div style="font-family:Sora,sans-serif;font-weight:800;font-size:18px;color:#1e2a4a;">${escapeHtml(APP.companyData.name)}</div>
       <div style="font-size:12px;color:#6b7280;margin-bottom:10px;">Collection Summary — ${fmtDateDisplay(adminCollDate)}${adminCollSalesman?' — '+escapeHtml(adminCollSalesman):''}</div>
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
@@ -1484,6 +1457,7 @@ function shareSnapshot(useShare){
           <th style="padding:6px 10px;text-align:right;">OS</th>
           <th style="padding:6px 10px;text-align:right;">Plan</th>
           <th style="padding:6px 10px;text-align:right;">Received</th>
+          <th style="padding:6px 10px;text-align:right;">Pending</th>
         </tr></thead>
         <tbody>${rows}</tbody>
         <tfoot>
@@ -1492,8 +1466,8 @@ function shareSnapshot(useShare){
             <td style="padding:6px 10px;text-align:right;">${isFinalized?'—':fmtINR(totalOS)}</td>
             <td style="padding:6px 10px;text-align:right;">${fmtINR(totalPlan)}</td>
             <td style="padding:6px 10px;text-align:right;">${fmtINR(totalReceived)}</td>
+            <td style="padding:6px 10px;text-align:right;color:${totalPending>0?'#e5484d':'#2e9e5b'};">${isFinalized?'—':fmtINR(totalPending)}</td>
           </tr>
-          ${!isFinalized?`<tr><td style="padding:6px 10px;font-weight:700;color:#e5484d;">Pending</td><td colspan="3" style="padding:6px 10px;text-align:right;font-weight:700;color:#e5484d;">${fmtINR(totalPending)}</td></tr>`:''}
         </tfoot>
       </table>
       <div style="font-size:10.5px;color:#9aa1ad;margin-top:10px;">Generated by SunStar OCM</div>
@@ -1743,20 +1717,12 @@ function renderAdminReports(){
     </div>
     <div class="grid grid-3" id="repKpis"><div class="spinner"></div></div>
     <div class="card">
-      <div class="card-title">Salesman-wise Performance</div>
+      <div class="card-title">Date-wise Summary</div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Salesman</th><th>Orders</th><th>Order Value</th><th>Pending</th><th>Partial</th><th>Billed</th><th>Plan</th><th>Received</th></tr></thead>
-          <tbody id="repSalesmanTbody"></tbody>
-        </table>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title">Item-wise Sales</div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Item</th><th>Brand</th><th>Qty Ordered</th><th>Value</th></tr></thead>
-          <tbody id="repItemTbody"></tbody>
+          <thead><tr><th>Date</th><th>Orders</th><th>Order Value</th><th>Billed Qty</th><th>Billing Value</th><th>Plan</th><th>Received</th></tr></thead>
+          <tbody id="repDateTbody"></tbody>
+          <tfoot id="repDateTfoot"></tfoot>
         </table>
       </div>
     </div>
@@ -1780,6 +1746,7 @@ function renderAdminReports(){
 }
 
 async function loadReportsData(){
+  $('#repKpis').innerHTML = '<div class="spinner"></div>';
   try{
   const {from,to} = getRangeDates(repRange==='custom' ? 'custom' : repRange) ;
   const f = repRange==='custom' ? repFrom : from;
@@ -1792,57 +1759,67 @@ async function loadReportsData(){
   const outSnap = await DB.collection('companies').doc(APP.companyId).collection('outstanding')
     .where(firebase.firestore.FieldPath.documentId(),'>=',f)
     .where(firebase.firestore.FieldPath.documentId(),'<=',t).get();
-  const outDocs=[]; outSnap.forEach(d=>outDocs.push(d.data()));
+  const outDocs=[]; outSnap.forEach(d=>outDocs.push(Object.assign({id:d.id}, d.data())));
 
-  // Salesman aggregation
-  const smMap={};
+  // ---- Date-wise aggregation ----
+  const dateMap = {};
+  const ensureDate = (d)=>{
+    if(!dateMap[d]) dateMap[d] = {orders:0, orderValue:0, billedQty:0, billingValue:0, plan:0, received:0};
+    return dateMap[d];
+  };
   orders.forEach(o=>{
-    const sm=o.salesmanName;
-    if(!smMap[sm]) smMap[sm]={orders:0,value:0,pending:0,partial:0,billed:0};
-    smMap[sm].orders++; smMap[sm].value+=o.totalValue||0;
-    smMap[sm][o.status]++;
+    const row = ensureDate(o.date);
+    row.orders++; row.orderValue += o.totalValue||0;
+    (o.items||[]).forEach(it=>{
+      row.billedQty += it.billedQty||0;
+      row.billingValue += (it.billedQty||0)*(it.rate||0);
+    });
   });
-  outDocs.forEach(d=> Object.values(d.outlets||{}).forEach(o=>{
-    const sm=o.salesmanName||'Unassigned';
-    if(!smMap[sm]) smMap[sm]={orders:0,value:0,pending:0,partial:0,billed:0,plan:0,received:0};
-    smMap[sm].plan=(smMap[sm].plan||0)+(Number(o.plan)||0);
-    smMap[sm].received=(smMap[sm].received||0)+(Number(o.received)||0);
-  }));
-  const smRows = Object.entries(smMap).map(([sm,d])=>`
-    <tr>
-      <td><b>${escapeHtml(sm)}</b></td>
-      <td>${d.orders||0}</td><td>${fmtINR(d.value||0)}</td>
-      <td>${d.pending||0}</td><td>${d.partial||0}</td><td>${d.billed||0}</td>
-      <td>${fmtINR(d.plan||0)}</td><td>${fmtINR(d.received||0)}</td>
-    </tr>`).join('');
-  $('#repSalesmanTbody').innerHTML = smRows || `<tr><td colspan="8" style="text-align:center;color:var(--text-muted);">No data</td></tr>`;
+  outDocs.forEach(d=>{
+    const row = ensureDate(d.id);
+    Object.values(d.outlets||{}).forEach(o=>{
+      row.plan += Number(o.plan)||0; row.received += Number(o.received)||0;
+    });
+  });
+  const dates = Object.keys(dateMap).sort();
 
-  // Item-wise aggregation
-  const itemMap={};
-  orders.forEach(o=> o.items.forEach(it=>{
-    const key = it.itemName+'|'+o.brand;
-    if(!itemMap[key]) itemMap[key]={itemName:it.itemName, brand:o.brand, qty:0, value:0};
-    itemMap[key].qty += it.orderedQty;
-    itemMap[key].value += it.value;
-  }));
-  const itemRows = Object.values(itemMap).sort((a,b)=>b.value-a.value).map(it=>`
-    <tr>
-      <td><b>${escapeHtml(it.itemName)}</b></td>
-      <td><span class="badge badge-blue">${escapeHtml(it.brand)}</span></td>
-      <td>${fmtNum(it.qty)}</td>
-      <td>${fmtINR(it.value)}</td>
-    </tr>`).join('');
-  $('#repItemTbody').innerHTML = itemRows || `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">No data</td></tr>`;
+  let totalOrderValue=0, totalOrderQty=0, totalBilledValue=0, totalBilledQty=0, totalOrders=0, totalPlan=0, totalReceived=0;
+  const dateRows = dates.map(d=>{
+    const r = dateMap[d];
+    totalOrders += r.orders; totalOrderValue += r.orderValue;
+    totalBilledQty += r.billedQty; totalBilledValue += r.billingValue;
+    totalPlan += r.plan; totalReceived += r.received;
+    return `<tr>
+      <td>${fmtDateDisplay(d)}</td>
+      <td>${r.orders}</td>
+      <td>${fmtINR(r.orderValue)}</td>
+      <td>${fmtNum(r.billedQty)}</td>
+      <td>${fmtINR(r.billingValue)}</td>
+      <td>${fmtINR(r.plan)}</td>
+      <td>${fmtINR(r.received)}</td>
+    </tr>`;
+  }).join('');
+  $('#repDateTbody').innerHTML = dateRows || `<tr><td colspan="7" style="text-align:center;color:var(--text-muted);">No data for this period</td></tr>`;
+  $('#repDateTfoot').innerHTML = dates.length ? `
+    <tr style="font-weight:700;background:var(--bg);">
+      <td>Total</td>
+      <td>${totalOrders}</td>
+      <td>${fmtINR(totalOrderValue)}</td>
+      <td>${fmtNum(totalBilledQty)}</td>
+      <td>${fmtINR(totalBilledValue)}</td>
+      <td>${fmtINR(totalPlan)}</td>
+      <td>${fmtINR(totalReceived)}</td>
+    </tr>` : '';
 
-  // Overall KPI presentation
-  let totalOrderValue=0, totalOrderQty=0, totalBilledValue=0, totalBilledQty=0;
-  const orderBillingRows=[];
+  // ---- Order vs Billing rows for export ----
   orders.forEach(o=>{
-    totalOrderValue += o.totalValue||0;
     (o.items||[]).forEach(it=>{
       totalOrderQty += it.orderedQty||0;
-      totalBilledQty += it.billedQty||0;
-      totalBilledValue += (it.billedQty||0)*(it.rate||0);
+    });
+  });
+  const orderBillingRows=[];
+  orders.forEach(o=>{
+    (o.items||[]).forEach(it=>{
       orderBillingRows.push({
         date:o.date, outletName:o.outletName, salesmanName:o.salesmanName, brand:o.brand,
         model:it.itemName, stock:it.stockAtOrder!==undefined?it.stockAtOrder:'', order:it.orderedQty,
@@ -1850,21 +1827,22 @@ async function loadReportsData(){
       });
     });
   });
-  let totalPlan=0, totalReceived=0;
+
+  // ---- Plan vs Received rows for export ----
   const planReceivedRows=[];
   outDocs.forEach(d=> Object.entries(d.outlets||{}).forEach(([id,o])=>{
-    totalPlan += Number(o.plan)||0; totalReceived += Number(o.received)||0;
     planReceivedRows.push({
       date:d.id, outletName:o.outletName, salesmanName:o.salesmanName||'',
       outstanding: o.os!==undefined?o.os:'', plan:o.plan||0, received:o.received||0,
       pending: o.os!==undefined ? (Number(o.os)||0)-(Number(o.received)||0) : ''
     });
   }));
+
   const collectionPending = Math.max(0, totalPlan-totalReceived);
   $('#repKpis').innerHTML = `
     <div class="kpi blue"><div class="label">Order Value</div><div class="value">${fmtINR(totalOrderValue)}</div><div class="sub">Qty: ${fmtNum(totalOrderQty)}</div></div>
     <div class="kpi green"><div class="label">Billing Value</div><div class="value">${fmtINR(totalBilledValue)}</div><div class="sub">Qty: ${fmtNum(totalBilledQty)}</div></div>
-    <div class="kpi amber"><div class="label">Order Count</div><div class="value">${orders.length}</div><div class="sub">${orders.filter(o=>o.status==='pending').length} pending, ${orders.filter(o=>o.status==='partial').length} partial</div></div>
+    <div class="kpi amber"><div class="label">Order Count</div><div class="value">${totalOrders}</div><div class="sub">${orders.filter(o=>o.status==='pending').length} pending, ${orders.filter(o=>o.status==='partial').length} partial</div></div>
     <div class="kpi green"><div class="label">Collection Received</div><div class="value">${fmtINR(totalReceived)}</div><div class="sub">Plan: ${fmtINR(totalPlan)}</div></div>
     <div class="kpi red"><div class="label">Collection Pending</div><div class="value">${fmtINR(collectionPending)}</div><div class="sub">Plan − Received</div></div>
     <div class="kpi"><div class="label">Period</div><div class="value" style="font-size:14px;">${fmtDateDisplay(f)} – ${fmtDateDisplay(t)}</div></div>
@@ -1873,15 +1851,13 @@ async function loadReportsData(){
   // Store for Excel export
   APP.repData = {
     range: `${fmtDateDisplay(f)} to ${fmtDateDisplay(t)}`,
-    salesman: Object.entries(smMap).map(([sm,d])=>({salesman:sm, orders:d.orders||0, value:d.value||0, pending:d.pending||0, partial:d.partial||0, billed:d.billed||0, plan:d.plan||0, received:d.received||0})),
-    items: Object.values(itemMap).sort((a,b)=>b.value-a.value),
     orderBillingRows, planReceivedRows
   };
   } catch(err){
     console.error('Reports load error:', err);
     $('#repKpis').innerHTML = `<div class="empty-state" style="grid-column:1/-1;"><div class="es-icon">⚠️</div><h4>Could not load report data</h4><p>${escapeHtml(err.message)}</p></div>`;
-    $('#repSalesmanTbody').innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--red-600);">Error: ${escapeHtml(err.message)}</td></tr>`;
-    $('#repItemTbody').innerHTML = '';
+    $('#repDateTbody').innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--red-600);">Error: ${escapeHtml(err.message)}</td></tr>`;
+    $('#repDateTfoot').innerHTML = '';
   }
 }
 
@@ -1890,34 +1866,46 @@ async function loadReportsData(){
 ============================================================ */
 const XLC = {
   headerBg:'#1e2a4a', headerText:'#ffffff',
-  green:'#e3f7ec', amber:'#fef6db', blue:'#e6f1fb', red:'#fdeaea', gray:'#f6f7fb'
+  green:'#e3f7ec', amber:'#fef6db', blue:'#e6f1fb', red:'#fdeaea', gray:'#f6f7fb', zebra:'#f6f7fb'
 };
 const xlTh = (txt)=>`<th style="background:${XLC.headerBg};color:${XLC.headerText};padding:6px 10px;font-family:sans-serif;font-size:12px;border:1px solid #ccc;">${escapeHtml(txt)}</th>`;
 const xlTd = (txt, bg, align)=>`<td style="padding:6px 10px;font-family:sans-serif;font-size:12px;border:1px solid #ccc;${bg?`background:${bg};`:''}${align?`text-align:${align};`:''}">${txt}</td>`;
+const xlRowBg = (idx, override)=> override || (idx%2===1 ? XLC.zebra : '#ffffff');
+const xlSectionRow = (label, colspan)=>`<tr><td colspan="${colspan}" style="padding:6px 10px;font-family:sans-serif;font-size:12px;font-weight:700;background:${XLC.blue};border:1px solid #ccc;">${escapeHtml(label)}</td></tr>`;
+const xlTotalRow = (cellsHtml)=>`<tr style="font-weight:700;">${cellsHtml}</tr>`;
 
 function exportOrderBillingExcel(){
   const data = APP.repData;
   if(!data){ showToast('Report data not ready yet','error'); return; }
 
   let html = `<html><head><meta charset="utf-8"></head><body>`;
-  html += `<h3 style="font-family:sans-serif;">${escapeHtml(APP.companyData.name)} — Order vs Billing</h3>`;
+  html += `<h3 style="font-family:sans-serif;color:#1e2a4a;">${escapeHtml(APP.companyData.name)} — Order vs Billing</h3>`;
   html += `<p style="font-family:sans-serif;font-size:12px;color:#666;">Period: ${escapeHtml(data.range)}</p>`;
   html += `<table cellspacing="0">`;
   html += `<tr>${xlTh('Date')}${xlTh('Outlet Name')}${xlTh('Salesman Name')}${xlTh('Brand')}${xlTh('Model')}${xlTh('Stock')}${xlTh('Order')}${xlTh('Billing')}${xlTh('Pending')}</tr>`;
-  data.orderBillingRows.forEach(r=>{
+  let totOrder=0, totBilling=0, totPending=0;
+  data.orderBillingRows.forEach((r,idx)=>{
+    const rowBg = xlRowBg(idx);
     const pendingBg = r.pending>0 ? XLC.amber : XLC.green;
+    totOrder += Number(r.order)||0; totBilling += Number(r.billing)||0; totPending += Number(r.pending)||0;
     html += `<tr>`
-      + xlTd(fmtDateDisplay(r.date))
-      + xlTd(escapeHtml(r.outletName))
-      + xlTd(escapeHtml(r.salesmanName))
+      + xlTd(fmtDateDisplay(r.date), rowBg)
+      + xlTd(escapeHtml(r.outletName), rowBg)
+      + xlTd(escapeHtml(r.salesmanName), rowBg)
       + xlTd(escapeHtml(r.brand),XLC.blue,'center')
-      + xlTd(escapeHtml(r.model))
-      + xlTd(r.stock,null,'center')
-      + xlTd(r.order,null,'center')
-      + xlTd(r.billing, r.billing>0?XLC.green:null,'center')
+      + xlTd(escapeHtml(r.model), rowBg)
+      + xlTd(r.stock, rowBg,'center')
+      + xlTd(r.order, rowBg,'center')
+      + xlTd(r.billing, r.billing>0?XLC.green:rowBg,'center')
       + xlTd(r.pending, pendingBg,'center')
       + `</tr>`;
   });
+  if(data.orderBillingRows.length){
+    html += xlTotalRow(
+      xlTd('Total', XLC.gray) + xlTd('', XLC.gray) + xlTd('', XLC.gray) + xlTd('', XLC.gray) + xlTd('', XLC.gray)
+      + xlTd('', XLC.gray,'center') + xlTd(totOrder, XLC.gray,'center') + xlTd(totBilling, XLC.gray,'center') + xlTd(totPending, XLC.gray,'center')
+    );
+  }
   html += `</table></body></html>`;
 
   const blob = new Blob([html], {type:'application/vnd.ms-excel'});
@@ -1930,23 +1918,35 @@ function exportPlanReceivedExcel(){
   if(!data){ showToast('Report data not ready yet','error'); return; }
 
   let html = `<html><head><meta charset="utf-8"></head><body>`;
-  html += `<h3 style="font-family:sans-serif;">${escapeHtml(APP.companyData.name)} — Outstanding, Plan &amp; Received</h3>`;
+  html += `<h3 style="font-family:sans-serif;color:#1e2a4a;">${escapeHtml(APP.companyData.name)} — Outstanding, Plan &amp; Received</h3>`;
   html += `<p style="font-family:sans-serif;font-size:12px;color:#666;">Period: ${escapeHtml(data.range)}</p>`;
   html += `<table cellspacing="0">`;
   html += `<tr>${xlTh('Date')}${xlTh('Outlet Name')}${xlTh('Salesman Name')}${xlTh('Outstanding')}${xlTh('Plan')}${xlTh('Received')}${xlTh('Pending')}</tr>`;
-  data.planReceivedRows.forEach(r=>{
-    const pendingBg = r.pending===''? null : (Number(r.pending)>0 ? XLC.amber : XLC.green);
-    const receivedBg = r.received >= r.plan && r.plan>0 ? XLC.green : (r.received>0 ? XLC.blue : null);
+  let totOS=0, totPlan=0, totReceived=0, totPending=0;
+  data.planReceivedRows.forEach((r,idx)=>{
+    const rowBg = xlRowBg(idx);
+    const pendingBg = r.pending===''? rowBg : (Number(r.pending)>0 ? XLC.amber : XLC.green);
+    const receivedBg = r.received >= r.plan && r.plan>0 ? XLC.green : (r.received>0 ? XLC.blue : rowBg);
+    if(r.outstanding!=='') totOS += Number(r.outstanding)||0;
+    totPlan += Number(r.plan)||0; totReceived += Number(r.received)||0;
+    if(r.pending!=='') totPending += Number(r.pending)||0;
     html += `<tr>`
-      + xlTd(fmtDateDisplay(r.date))
-      + xlTd(escapeHtml(r.outletName))
-      + xlTd(escapeHtml(r.salesmanName))
-      + xlTd(r.outstanding===''?'—':fmtINR(r.outstanding),null,'right')
-      + xlTd(fmtINR(r.plan),null,'right')
+      + xlTd(fmtDateDisplay(r.date), rowBg)
+      + xlTd(escapeHtml(r.outletName), rowBg)
+      + xlTd(escapeHtml(r.salesmanName), rowBg)
+      + xlTd(r.outstanding===''?'—':fmtINR(r.outstanding),rowBg,'right')
+      + xlTd(fmtINR(r.plan),rowBg,'right')
       + xlTd(fmtINR(r.received),receivedBg,'right')
       + xlTd(r.pending===''?'—':fmtINR(r.pending), pendingBg,'right')
       + `</tr>`;
   });
+  if(data.planReceivedRows.length){
+    html += xlTotalRow(
+      xlTd('Total', XLC.gray) + xlTd('', XLC.gray) + xlTd('', XLC.gray)
+      + xlTd(fmtINR(totOS), XLC.gray,'right') + xlTd(fmtINR(totPlan), XLC.gray,'right')
+      + xlTd(fmtINR(totReceived), XLC.gray,'right') + xlTd(fmtINR(totPending), XLC.gray,'right')
+    );
+  }
   html += `</table></body></html>`;
 
   const blob = new Blob([html], {type:'application/vnd.ms-excel'});
@@ -2051,16 +2051,70 @@ function openResolveOutletModal(order){
    EXCEL EXPORT — Master (Outlet & Salesman)
 ============================================================ */
 function exportMasterExcel(){
-  const list = (APP.outlets||[]).slice().sort((a,b)=>(a.outletName||'').localeCompare(b.outletName||''));
+  const list = (APP.outlets||[]).slice().sort((a,b)=>{
+    const sa=(a.salesmanName||'Unassigned'), sb=(b.salesmanName||'Unassigned');
+    if(sa!==sb) return sa.localeCompare(sb);
+    return (a.outletName||'').localeCompare(b.outletName||'');
+  });
   let html = `<html><head><meta charset="utf-8"></head><body>`;
-  html += `<h3 style="font-family:sans-serif;">${escapeHtml(APP.companyData.name)} — Outlet &amp; Salesman Master</h3>`;
+  html += `<h3 style="font-family:sans-serif;color:#1e2a4a;">${escapeHtml(APP.companyData.name)} — Outlet &amp; Salesman Master</h3>`;
+  html += `<p style="font-family:sans-serif;font-size:12px;color:#666;">Total Outlets: ${list.length}</p>`;
   html += `<table cellspacing="0">`;
   html += `<tr>${xlTh('Outlet Name')}${xlTh('Salesman Name')}</tr>`;
+  let currentSm = null, rowIdx = 0;
   list.forEach(o=>{
-    html += `<tr>${xlTd(escapeHtml(o.outletName))}${xlTd(escapeHtml(o.salesmanName||''))}</tr>`;
+    const sm = o.salesmanName || 'Unassigned';
+    if(sm!==currentSm){
+      html += xlSectionRow(sm, 2);
+      currentSm = sm; rowIdx = 0;
+    }
+    html += `<tr>${xlTd(escapeHtml(o.outletName), xlRowBg(rowIdx))}${xlTd(escapeHtml(sm), xlRowBg(rowIdx))}</tr>`;
+    rowIdx++;
   });
   html += `</table></body></html>`;
   const blob = new Blob([html], {type:'application/vnd.ms-excel'});
   downloadBlob(blob, `SunStar-OCM-Master-${todayStr()}.xls`);
   showToast('Master exported','success');
+}
+
+function exportStockExcel(){
+  const items = (APP.items||[]).slice().sort((a,b)=>{
+    if(a.brand!==b.brand) return (a.brand||'').localeCompare(b.brand||'');
+    return (a.itemName||'').localeCompare(b.itemName||'');
+  });
+  let html = `<html><head><meta charset="utf-8"></head><body>`;
+  html += `<h3 style="font-family:sans-serif;color:#1e2a4a;">${escapeHtml(APP.companyData.name)} — Stock</h3>`;
+  html += `<p style="font-family:sans-serif;font-size:12px;color:#666;">Generated: ${fmtDateDisplay(todayStr())}</p>`;
+  html += `<table cellspacing="0">`;
+  html += `<tr>${xlTh('Item Name')}${xlTh('Brand')}${xlTh('Qty')}${xlTh('Rate')}${xlTh('Value')}</tr>`;
+  let currentBrand = null, rowIdx = 0;
+  let grandQty=0, grandValue=0;
+  items.forEach(it=>{
+    const value = (it.qty||0)*(it.rate||0);
+    grandQty += it.qty||0; grandValue += value;
+    if(it.brand!==currentBrand){
+      html += xlSectionRow(it.brand||'Unbranded', 5);
+      currentBrand = it.brand; rowIdx = 0;
+    }
+    const lowStockBg = (it.qty||0)<=0 ? XLC.red : xlRowBg(rowIdx);
+    html += `<tr>`
+      + xlTd(escapeHtml(it.itemName), xlRowBg(rowIdx))
+      + xlTd(escapeHtml(it.brand||''), xlRowBg(rowIdx))
+      + xlTd(fmtNum(it.qty), lowStockBg,'center')
+      + xlTd(fmtINR(it.rate), xlRowBg(rowIdx),'right')
+      + xlTd(fmtINR(value), xlRowBg(rowIdx),'right')
+      + `</tr>`;
+    rowIdx++;
+  });
+  if(items.length){
+    html += xlTotalRow(
+      xlTd('Grand Total', XLC.gray) + xlTd('', XLC.gray)
+      + xlTd(fmtNum(grandQty), XLC.gray,'center') + xlTd('', XLC.gray)
+      + xlTd(fmtINR(grandValue), XLC.gray,'right')
+    );
+  }
+  html += `</table></body></html>`;
+  const blob = new Blob([html], {type:'application/vnd.ms-excel'});
+  downloadBlob(blob, `SunStar-OCM-Stock-${todayStr()}.xls`);
+  showToast('Stock exported','success');
 }
