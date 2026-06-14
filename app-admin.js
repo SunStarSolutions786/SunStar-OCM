@@ -1023,10 +1023,12 @@ function renderOrdersTable(){
       <td>${fmtINR(o.totalValue)}${o.status==='partial'?`<div class="helper-text" style="margin-top:2px;">Pending: ${fmtINR(getOrderPendingValue(o))}</div>`:''}</td>
       <td>${os ? fmtINR(os.os) : '—'}</td>
       <td><span class="badge badge-${ds.color}">${ds.label}</span></td>
-      <td style="display:flex;gap:6px;flex-wrap:wrap;">
-        ${actionBtn}
-        <button class="btn btn-outline btn-sm" data-items="${o.id}">Items</button>
-        ${o.isNewOutlet?`<button class="btn btn-accent btn-sm" data-resolve="${o.id}">Resolve Outlet</button>`:''}
+      <td>
+        <div class="action-grid">
+          ${actionBtn}
+          <button class="btn btn-outline btn-sm" data-items="${o.id}">Items</button>
+          ${o.isNewOutlet?`<button class="btn btn-accent btn-sm" data-resolve="${o.id}">Resolve Outlet</button>`:''}
+        </div>
       </td>
     </tr>
   `;}).join('');
