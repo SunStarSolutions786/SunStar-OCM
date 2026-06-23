@@ -40,57 +40,19 @@ function renderEmployeeEntry(){
       showEmpFullScreenMessage('Access Suspended','Your company\'s subscription has expired. Please contact your office to restore access.');
       return;
     }
-    if(!APP.salesman){
-      const saved = sessionStorage.getItem('emp_sm_'+APP.token);
-      if(saved) APP.salesman = saved;
-    } else {
-      sessionStorage.setItem('emp_sm_'+APP.token, APP.salesman);
+
+    // If sm= is in URL, lock to that name — no picker, no override
+    if(APP.salesman){
+      sessionStorage.setItem('emp_sm_'+APP.token+'_'+APP.salesman, '1');
+      loadEmployeeData();
+      return;
     }
-    if(APP.salesman) loadEmployeeData();
-    else renderSalesmanPicker();
-  });
-}
 
-function renderSalesmanPicker(){
-  $('#appRoot').innerHTML='';
-  const root = el(`
-    <div class="emp-shell">
-      <div class="emp-topbar">
-        <div class="et-row">
-          <div>
-            <div class="et-title">${escapeHtml(APP.companyData.name)}</div>
-            <div class="et-sub">SunStar OCM</div>
-          </div>
-        </div>
-      </div>
-      <div class="emp-content">
-        <div class="card">
-          <div class="card-title">Select Your Name</div>
-          <div id="salesmanList"></div>
-          <div class="empty-state hidden" id="smEmpty">
-            <div class="es-icon">🧑‍💼</div><h4>No salesmen found</h4>
-            <p>Ask your admin to add outlets with salesman names in the Master.</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  `);
-  $('#appRoot').appendChild(root);
-
-  DB.collection('companies').doc(APP.companyId).collection('outlets').get().then(snap=>{
-    const names = new Set();
-    snap.forEach(d=>{ const sm=d.data().salesmanName; if(sm) names.add(sm); });
-    const list = $('#salesmanList');
-    if(names.size===0){ $('#smEmpty').classList.remove('hidden'); return; }
-    [...names].sort().forEach(name=>{
-      const btn = el(`<button class="btn btn-outline btn-block" style="margin-bottom:8px;justify-content:flex-start;">${escapeHtml(name)}</button>`);
-      btn.addEventListener('click', ()=>{
-        APP.salesman = name;
-        sessionStorage.setItem('emp_sm_'+APP.token, name);
-        loadEmployeeData();
-      });
-      list.appendChild(btn);
-    });
+    // No sm= in URL → this is the universal link; block access
+    showEmpFullScreenMessage(
+      'Personal Link Required',
+      "This is the company's universal order link. Please use your personal link from your admin — it ends with &sm=YourName."
+    );
   });
 }
 
@@ -104,7 +66,7 @@ function loadEmployeeData(){
             <div class="et-title">${escapeHtml(APP.companyData.name)}</div>
             <div class="et-sub">${escapeHtml(APP.salesman)}</div>
           </div>
-          <div class="et-avatar" id="empAvatar" title="Switch user">${escapeHtml(APP.salesman.slice(0,2).toUpperCase())}</div>
+          <div class="et-avatar">${escapeHtml(APP.salesman.slice(0,2).toUpperCase())}</div>
         </div>
       </div>
       <div class="emp-content" id="empContent"></div>
@@ -114,14 +76,6 @@ function loadEmployeeData(){
     </div>
   `);
   $('#appRoot').appendChild(root);
-
-  $('#empAvatar').addEventListener('click', ()=>{
-    if(confirm('Switch to a different salesman name?')){
-      sessionStorage.removeItem('emp_sm_'+APP.token);
-      APP.salesman=null;
-      renderSalesmanPicker();
-    }
-  });
 
   const navItems = [
     {key:'order', label:'New Order', icon:'🛒'},
