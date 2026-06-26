@@ -118,27 +118,34 @@ function checkSubscriptionAndEnter(){
 
 /* ---------- Main Admin Shell ---------- */
 function renderAdminApp(activeKey){
-  $('#appRoot').innerHTML='';
-  const sub = getSubscriptionStatus(APP.companyData);
-  const root = buildShellLayout({
-    brandName: APP.companyData.name,
-    brandSub: 'Admin Panel',
-    navItems: ADMIN_NAV,
-    activeKey,
-    roleClass:'role-admin',
-    onNav:(key)=> renderAdminApp(key),
-    footerHtml:`
-      <div class="sub-pill badge-${sub.color}" style="background:var(--${sub.color==='gray'?'gray':sub.color}-100);color:var(--${sub.color==='gray'?'gray':sub.color}-600);margin-bottom:8px;">
-        <span class="dot" style="background:var(--${sub.color==='gray'?'gray':sub.color}-600);"></span>
-        ${sub.label}
-      </div>
-      <button class="btn btn-outline btn-block" id="adLogoutBtn">Log Out</button>`
-  });
-  $('#appRoot').appendChild(root);
-  $('#adLogoutBtn').addEventListener('click', ()=>{
-    sessionStorage.removeItem('admin_auth_'+APP.companyId);
-    location.reload();
-  });
+  // Only rebuild the full shell if it doesn't exist yet (first load)
+  const shellExists = !!$('#pageContent');
+  if(!shellExists){
+    $('#appRoot').innerHTML='';
+    const sub = getSubscriptionStatus(APP.companyData);
+    const root = buildShellLayout({
+      brandName: APP.companyData.name,
+      brandSub: 'Admin Panel',
+      navItems: ADMIN_NAV,
+      activeKey,
+      roleClass:'role-admin',
+      onNav:(key)=> renderAdminApp(key),
+      footerHtml:`
+        <div class="sub-pill badge-${sub.color}" style="background:var(--${sub.color==='gray'?'gray':sub.color}-100);color:var(--${sub.color==='gray'?'gray':sub.color}-600);margin-bottom:8px;">
+          <span class="dot" style="background:var(--${sub.color==='gray'?'gray':sub.color}-600);"></span>
+          ${sub.label}
+        </div>
+        <button class="btn btn-outline btn-block" id="adLogoutBtn">Log Out</button>`
+    });
+    $('#appRoot').appendChild(root);
+    $('#adLogoutBtn').addEventListener('click', ()=>{
+      sessionStorage.removeItem('admin_auth_'+APP.companyId);
+      location.reload();
+    });
+  }
+
+  // Update active nav highlight without rebuilding sidebar
+  $all('.nav-item').forEach(b=> b.classList.toggle('active', b.dataset.key===activeKey));
 
   APP.unsub.forEach(u=>u());
   APP.unsub=[];
@@ -1543,6 +1550,11 @@ function getRangeDates(range){
 
 function renderAdminDashboard(){
   const content = $('#pageContent');
+
+  const skeletonKpis = ['Order Value','Billing Value','Pending / Partial','Collection Received','Collection Pending','Current Outstanding']
+    .map(label=>`<div class="kpi skeleton"><div class="label">${label}</div><div class="value skel-line skel-value"></div><div class="sub skel-line skel-sub"></div></div>`)
+    .join('');
+
   content.innerHTML = `
     <div class="pill-tabs" id="dashRangeTabs">
       <button class="pill-tab" data-r="today">Today</button>
@@ -1557,14 +1569,7 @@ function renderAdminDashboard(){
         <div class="field" style="display:flex;align-items:flex-end;"><button class="btn btn-accent btn-block" id="dashCustomGo">Apply</button></div>
       </div>
     </div>
-    <div class="grid grid-3" id="dashKpis">
-      ${['Order Value','Billing Value','Pending / Partial','Collection Received','Collection Pending','Current Outstanding'].map(label=>`
-        <div class="kpi skeleton">
-          <div class="label">${label}</div>
-          <div class="value skel-line skel-value"></div>
-          <div class="sub skel-line skel-sub"></div>
-        </div>`).join('')}
-    </div>
+    <div class="grid grid-3" id="dashKpis">${skeletonKpis}</div>
     <div class="grid grid-charts">
       <div class="card"><div class="card-title">Order vs Billing (by Date)</div><canvas id="chartOrderBilling" height="220"></canvas></div>
       <div class="card"><div class="card-title">Collection: Plan vs Received (by Salesman)</div><canvas id="chartCollection" height="220"></canvas></div>
@@ -1577,12 +1582,17 @@ function renderAdminDashboard(){
       dashRange = b.dataset.r;
       $all('#dashRangeTabs .pill-tab').forEach(x=>x.classList.toggle('active', x===b));
       $('#customRangeCard').classList.toggle('hidden', dashRange!=='custom');
-      if(dashRange!=='custom') loadDashboardData();
+      if(dashRange!=='custom'){
+        // Reset to skeletons before reload
+        $('#dashKpis').innerHTML = skeletonKpis;
+        loadDashboardData();
+      }
     });
   });
   $('#customRangeCard').classList.toggle('hidden', dashRange!=='custom');
   $('#dashCustomGo').addEventListener('click', ()=>{
     dashFrom = $('#dashFromInput').value; dashTo = $('#dashToInput').value;
+    $('#dashKpis').innerHTML = skeletonKpis;
     loadDashboardData();
   });
 

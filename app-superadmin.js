@@ -101,22 +101,24 @@ function renderSuperAdminLogin(){
 
 /* ---------- Main Super Admin App Shell ---------- */
 function renderSuperAdminApp(activeKey){
-  $('#appRoot').innerHTML='';
-  const root = buildShellLayout({
-    brandName:'SunStar OCM',
-    brandSub:'Super Admin',
-    navItems: SA_NAV,
-    activeKey,
-    roleClass:'role-superadmin',
-    onNav:(key)=> renderSuperAdminApp(key),
-    footerHtml:`<button class="btn btn-outline btn-block" id="saLogoutBtn">Log Out</button>`
-  });
-  $('#appRoot').appendChild(root);
-  $('#saLogoutBtn').addEventListener('click', ()=>{
-    sessionStorage.removeItem('sa_auth');
-    location.reload();
-  });
-
+  if(!$('#pageContent')){
+    $('#appRoot').innerHTML='';
+    const root = buildShellLayout({
+      brandName:'SunStar OCM',
+      brandSub:'Super Admin',
+      navItems: SA_NAV,
+      activeKey,
+      roleClass:'role-superadmin',
+      onNav:(key)=> renderSuperAdminApp(key),
+      footerHtml:`<button class="btn btn-outline btn-block" id="saLogoutBtn">Log Out</button>`
+    });
+    $('#appRoot').appendChild(root);
+    $('#saLogoutBtn').addEventListener('click', ()=>{
+      sessionStorage.removeItem('sa_auth');
+      location.reload();
+    });
+  }
+  $all('.nav-item').forEach(b=> b.classList.toggle('active', b.dataset.key===activeKey));
   if(activeKey==='companies'){ setPageTitle('Companies'); renderSACompanies(); }
   else if(activeKey==='settings'){ setPageTitle('Settings'); renderSASettings(); }
 }
