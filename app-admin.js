@@ -1254,11 +1254,23 @@ function renderCollectionTable(){
     if(!isFinalized) totalPending += (Number(o.os)||0) - (Number(o.received)||0);
   });
   $('#collKpis').innerHTML = `
-    <div class="kpi blue"><div class="label">Outstanding</div><div class="value">${isFinalized?'—':fmtINR(totalOS)}</div></div>
-    <div class="kpi amber"><div class="label">Plan</div><div class="value">${fmtINR(totalPlan)}</div></div>
-    <div class="kpi green"><div class="label">Received</div><div class="value">${fmtINR(totalReceived)}</div></div>
-    <div class="kpi red"><div class="label">Pending</div><div class="value">${isFinalized?'—':fmtINR(totalPending)}</div></div>
+    <div class="kpi blue"><div class="label">Outstanding</div><div class="value kpi-num" data-val="${isFinalized?-1:totalOS}" data-empty="${isFinalized?'1':''}">₹0</div></div>
+    <div class="kpi amber"><div class="label">Plan</div><div class="value kpi-num" data-val="${totalPlan}">₹0</div></div>
+    <div class="kpi green"><div class="label">Received</div><div class="value kpi-num" data-val="${totalReceived}">₹0</div></div>
+    <div class="kpi red"><div class="label">Pending</div><div class="value kpi-num" data-val="${isFinalized?-1:totalPending}" data-empty="${isFinalized?'1':''}">₹0</div></div>
   `;
+  $all('#collKpis .kpi-num').forEach(el=>{
+    if(el.dataset.empty==='1'){ el.textContent='—'; return; }
+    const target = Number(el.dataset.val)||0;
+    if(target===0){ el.textContent=fmtINR(0); return; }
+    const steps=40, interval=800/40; let step=0;
+    const timer = setInterval(()=>{
+      step++;
+      const ease = 1-Math.pow(1-step/steps,3);
+      el.textContent = fmtINR(Math.round(target*ease));
+      if(step>=steps){ el.textContent=fmtINR(target); clearInterval(timer); }
+    }, interval);
+  });
 
   $('#collStatusBadge').innerHTML = isFinalized
     ? `<span class="badge badge-gray">🔒 Finalized — Outstanding data cleared, Plan &amp; Received retained as history</span>`
@@ -1545,7 +1557,14 @@ function renderAdminDashboard(){
         <div class="field" style="display:flex;align-items:flex-end;"><button class="btn btn-accent btn-block" id="dashCustomGo">Apply</button></div>
       </div>
     </div>
-    <div class="grid grid-3" id="dashKpis"><div class="spinner"></div></div>
+    <div class="grid grid-3" id="dashKpis">
+      ${['Order Value','Billing Value','Pending / Partial','Collection Received','Collection Pending','Current Outstanding'].map(label=>`
+        <div class="kpi skeleton">
+          <div class="label">${label}</div>
+          <div class="value skel-line skel-value"></div>
+          <div class="sub skel-line skel-sub"></div>
+        </div>`).join('')}
+    </div>
     <div class="grid grid-charts">
       <div class="card"><div class="card-title">Order vs Billing (by Date)</div><canvas id="chartOrderBilling" height="220"></canvas></div>
       <div class="card"><div class="card-title">Collection: Plan vs Received (by Salesman)</div><canvas id="chartCollection" height="220"></canvas></div>
@@ -1571,7 +1590,7 @@ function renderAdminDashboard(){
 }
 
 async function loadDashboardData(){
-  $('#dashKpis').innerHTML = '<div class="spinner"></div>';
+  // Skeletons already rendered by renderAdminDashboard — no spinner replacement needed
   try{
   const {from, to} = getRangeDates(dashRange);
 
@@ -1619,13 +1638,28 @@ async function loadDashboardData(){
   }
 
   $('#dashKpis').innerHTML = `
-    <div class="kpi blue"><div class="label">Order Value</div><div class="value">${fmtINR(totalOrderValue)}</div><div class="sub">Qty: ${fmtNum(totalOrderQty)}</div></div>
-    <div class="kpi green"><div class="label">Billing Value</div><div class="value">${fmtINR(totalBilledValue)}</div><div class="sub">Qty: ${fmtNum(totalBilledQty)}</div></div>
+    <div class="kpi blue"><div class="label">Order Value</div><div class="value kpi-num" data-val="${totalOrderValue}">₹0</div><div class="sub">Qty: ${fmtNum(totalOrderQty)}</div></div>
+    <div class="kpi green"><div class="label">Billing Value</div><div class="value kpi-num" data-val="${totalBilledValue}">₹0</div><div class="sub">Qty: ${fmtNum(totalBilledQty)}</div></div>
     <div class="kpi amber"><div class="label">Pending / Partial</div><div class="value">${pendingCount} / ${partialCount}</div><div class="sub">order(s)</div></div>
-    <div class="kpi green"><div class="label">Collection Received</div><div class="value">${fmtINR(totalReceived)}</div><div class="sub">Plan: ${fmtINR(totalPlan)}</div></div>
-    <div class="kpi red"><div class="label">Collection Pending</div><div class="value">${fmtINR(collectionPending)}</div><div class="sub">Plan − Received</div></div>
-    <div class="kpi red"><div class="label">Current Outstanding</div><div class="value">${latestOSDate?fmtINR(latestOS):'—'}</div><div class="sub">${latestOSDate?fmtDateDisplay(latestOSDate):'No open date'}</div></div>
+    <div class="kpi green"><div class="label">Collection Received</div><div class="value kpi-num" data-val="${totalReceived}">₹0</div><div class="sub">Plan: ${fmtINR(totalPlan)}</div></div>
+    <div class="kpi red"><div class="label">Collection Pending</div><div class="value kpi-num" data-val="${collectionPending}">₹0</div><div class="sub">Plan − Received</div></div>
+    <div class="kpi red"><div class="label">Current Outstanding</div><div class="value kpi-num" data-val="${latestOS}" data-empty="${latestOSDate?'':'1'}">₹0</div><div class="sub">${latestOSDate?fmtDateDisplay(latestOSDate):'No open date'}</div></div>
   `;
+  // Count-up animation
+  $all('.kpi-num').forEach(el=>{
+    if(el.dataset.empty==='1'){ el.textContent='—'; return; }
+    const target = Number(el.dataset.val)||0;
+    if(target===0){ el.textContent=fmtINR(0); return; }
+    const dur = 800, steps = 40, interval = dur/steps;
+    let step = 0;
+    const timer = setInterval(()=>{
+      step++;
+      const progress = step/steps;
+      const ease = 1 - Math.pow(1-progress, 3); // ease-out cubic
+      el.textContent = fmtINR(Math.round(target * ease));
+      if(step>=steps){ el.textContent=fmtINR(target); clearInterval(timer); }
+    }, interval);
+  });
 
   // ---- Chart 1: Order vs Billing (by date) ----
   const orderMap={}, billMap={};
