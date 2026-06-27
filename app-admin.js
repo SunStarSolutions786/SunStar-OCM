@@ -1578,6 +1578,8 @@ function renderAdminDashboard(){
       <div class="card"><div class="card-title">Collection: Plan vs Received (by Salesman)</div><canvas id="chartCollection" height="220"></canvas></div>
     </div>
   `;
+  // Immediately visible — no extra opacity needed from swapContent
+  content.style.opacity='1';
 
   $all('#dashRangeTabs .pill-tab').forEach(b=>{
     b.classList.toggle('active', b.dataset.r===dashRange);
@@ -1586,7 +1588,6 @@ function renderAdminDashboard(){
       $all('#dashRangeTabs .pill-tab').forEach(x=>x.classList.toggle('active', x===b));
       $('#customRangeCard').classList.toggle('hidden', dashRange!=='custom');
       if(dashRange!=='custom'){
-        // Reset to skeletons before reload
         $('#dashKpis').innerHTML = skeletonKpis;
         loadDashboardData();
       }
@@ -1703,10 +1704,13 @@ async function loadDashboardData(){
   ]);
   } catch(err){
     console.error('Dashboard load error:', err);
-    $('#dashKpis').innerHTML = `
+    const kpisEl = $('#dashKpis');
+    if(kpisEl) kpisEl.innerHTML = `
       <div class="empty-state" style="grid-column:1/-1;">
-        <div class="es-icon">⚠️</div><h4>Could not load dashboard data</h4>
-        <p>${escapeHtml(err.message)}</p>
+        <div class="es-icon">⚠️</div>
+        <h4>Could not load dashboard data</h4>
+        <p style="color:var(--red-600);font-size:12px;">${escapeHtml(err.message)}</p>
+        <button class="btn btn-outline btn-sm" onclick="loadDashboardData()" style="margin-top:8px;">Retry</button>
       </div>`;
   }
 }

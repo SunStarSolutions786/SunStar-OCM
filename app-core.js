@@ -205,20 +205,13 @@ function setPageTitle(title){
   if(elT) elT.textContent = title;
 }
 
-/* Smooth content swap — renders new content then fades in */
+/* Smooth content swap — renders immediately, fades in */
 function swapContent(renderFn){
   const content = $('#pageContent');
   if(!content){ renderFn(); return; }
-  // Immediately clear and render (no blank gap)
   renderFn();
-  // Then ensure visibility
-  content.style.opacity='0';
-  requestAnimationFrame(()=>{
-    requestAnimationFrame(()=>{
-      content.style.transition='opacity 0.15s ease';
-      content.style.opacity='1';
-    });
-  });
+  // Content is now in DOM — ensure it's visible (in case opacity was left at 0)
+  content.style.opacity='1';
 }
 
 /* ---------- Router ---------- */
