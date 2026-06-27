@@ -205,6 +205,22 @@ function setPageTitle(title){
   if(elT) elT.textContent = title;
 }
 
+/* Smooth content swap — renders new content then fades in */
+function swapContent(renderFn){
+  const content = $('#pageContent');
+  if(!content){ renderFn(); return; }
+  // Immediately clear and render (no blank gap)
+  renderFn();
+  // Then ensure visibility
+  content.style.opacity='0';
+  requestAnimationFrame(()=>{
+    requestAnimationFrame(()=>{
+      content.style.transition='opacity 0.15s ease';
+      content.style.opacity='1';
+    });
+  });
+}
+
 /* ---------- Router ---------- */
 function init(){
   const params = new URLSearchParams(window.location.search);

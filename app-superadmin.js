@@ -119,8 +119,8 @@ function renderSuperAdminApp(activeKey){
     });
   }
   $all('.nav-item').forEach(b=> b.classList.toggle('active', b.dataset.key===activeKey));
-  if(activeKey==='companies'){ setPageTitle('Companies'); renderSACompanies(); }
-  else if(activeKey==='settings'){ setPageTitle('Settings'); renderSASettings(); }
+  if(activeKey==='companies'){ setPageTitle('Companies'); swapContent(renderSACompanies); }
+  else if(activeKey==='settings'){ setPageTitle('Settings'); swapContent(renderSASettings); }
 }
 
 /* ---------- Companies List ---------- */

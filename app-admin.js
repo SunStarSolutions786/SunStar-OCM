@@ -118,9 +118,8 @@ function checkSubscriptionAndEnter(){
 
 /* ---------- Main Admin Shell ---------- */
 function renderAdminApp(activeKey){
-  // Only rebuild the full shell if it doesn't exist yet (first load)
-  const shellExists = !!$('#pageContent');
-  if(!shellExists){
+  // Build shell only once
+  if(!$('#pageContent')){
     $('#appRoot').innerHTML='';
     const sub = getSubscriptionStatus(APP.companyData);
     const root = buildShellLayout({
@@ -131,20 +130,21 @@ function renderAdminApp(activeKey){
       roleClass:'role-admin',
       onNav:(key)=> renderAdminApp(key),
       footerHtml:`
-        <div class="sub-pill badge-${sub.color}" style="background:var(--${sub.color==='gray'?'gray':sub.color}-100);color:var(--${sub.color==='gray'?'gray':sub.color}-600);margin-bottom:8px;">
-          <span class="dot" style="background:var(--${sub.color==='gray'?'gray':sub.color}-600);"></span>
-          ${sub.label}
+        <div class="sub-pill" style="background:var(--${APP._subColor||'green'}-100);color:var(--${APP._subColor||'green'}-600);margin-bottom:8px;display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:99px;font-size:12px;font-weight:600;">
+          <span style="width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block;"></span>
+          ${getSubscriptionStatus(APP.companyData).label}
         </div>
         <button class="btn btn-outline btn-block" id="adLogoutBtn">Log Out</button>`
     });
     $('#appRoot').appendChild(root);
+    APP._subColor = getSubscriptionStatus(APP.companyData).color;
     $('#adLogoutBtn').addEventListener('click', ()=>{
       sessionStorage.removeItem('admin_auth_'+APP.companyId);
       location.reload();
     });
   }
 
-  // Update active nav highlight without rebuilding sidebar
+  // Update active nav item
   $all('.nav-item').forEach(b=> b.classList.toggle('active', b.dataset.key===activeKey));
 
   APP.unsub.forEach(u=>u());
@@ -157,14 +157,17 @@ function renderAdminApp(activeKey){
   };
   setPageTitle(titles[activeKey]||'');
 
-  if(activeKey==='master') renderAdminMaster();
-  else if(activeKey==='stock') renderAdminStock();
-  else if(activeKey==='orders') renderAdminOrders();
-  else if(activeKey==='collection') renderAdminCollection();
-  else if(activeKey==='dashboard') renderAdminDashboard();
-  else if(activeKey==='reports') renderAdminReports();
-  else if(activeKey==='subscription') renderAdminSubscription();
-  else renderComingSoon(activeKey);
+  const renderMap = {
+    master: renderAdminMaster,
+    stock: renderAdminStock,
+    orders: renderAdminOrders,
+    collection: renderAdminCollection,
+    dashboard: renderAdminDashboard,
+    reports: renderAdminReports,
+    subscription: renderAdminSubscription
+  };
+  const fn = renderMap[activeKey] || (()=> renderComingSoon(activeKey));
+  swapContent(fn);
 }
 
 function renderComingSoon(key){
