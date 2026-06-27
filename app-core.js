@@ -205,9 +205,7 @@ function setPageTitle(title){
   if(elT) elT.textContent = title;
 }
 
-function swapContent(renderFn){
-  renderFn();
-}
+function swapContent(renderFn){ renderFn(); }
 
 /* ---------- Router ---------- */
 function init(){

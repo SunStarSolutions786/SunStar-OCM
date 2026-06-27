@@ -1578,9 +1578,7 @@ function renderAdminDashboard(){
       <div class="card"><div class="card-title">Collection: Plan vs Received (by Salesman)</div><canvas id="chartCollection" height="220"></canvas></div>
     </div>
   `;
-  // Immediately visible — no extra opacity needed from swapContent
-  content.style.opacity='1';
-
+  // Wire up range tabs
   $all('#dashRangeTabs .pill-tab').forEach(b=>{
     b.classList.toggle('active', b.dataset.r===dashRange);
     b.addEventListener('click', ()=>{
@@ -1606,13 +1604,11 @@ function renderAdminDashboard(){
 async function loadDashboardData(){
   try{
   const {from, to} = getRangeDates(dashRange);
-  console.log('[Dash] loading range:', from, to, 'company:', APP.companyId);
 
   const ordersSnap = await DB.collection('companies').doc(APP.companyId).collection('orders')
     .where('date','>=',from).where('date','<=',to).get();
   const orders=[];
   ordersSnap.forEach(d=> orders.push(d.data()));
-  console.log('[Dash] orders fetched:', orders.length);
 
   // Outstanding docs in range
   const outSnap = await DB.collection('companies').doc(APP.companyId).collection('outstanding')
@@ -1652,9 +1648,7 @@ async function loadDashboardData(){
   }
 
   const kpisEl = $('#dashKpis');
-  console.log('[Dash] #dashKpis element:', kpisEl ? 'FOUND' : 'NULL');
-  if(!kpisEl){ console.error('[Dash] #dashKpis not found — aborting render'); return; }
-
+  if(!kpisEl) return;
   kpisEl.innerHTML = `
     <div class="kpi blue"><div class="label">Order Value</div><div class="value kpi-num" data-val="${totalOrderValue}">₹0</div><div class="sub">Qty: ${fmtNum(totalOrderQty)}</div></div>
     <div class="kpi green"><div class="label">Billing Value</div><div class="value kpi-num" data-val="${totalBilledValue}">₹0</div><div class="sub">Qty: ${fmtNum(totalBilledQty)}</div></div>
