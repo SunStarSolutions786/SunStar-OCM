@@ -1604,15 +1604,15 @@ function renderAdminDashboard(){
 }
 
 async function loadDashboardData(){
-  // Skeletons already rendered by renderAdminDashboard — no spinner replacement needed
   try{
   const {from, to} = getRangeDates(dashRange);
+  console.log('[Dash] loading range:', from, to, 'company:', APP.companyId);
 
-  // Orders in range
   const ordersSnap = await DB.collection('companies').doc(APP.companyId).collection('orders')
     .where('date','>=',from).where('date','<=',to).get();
   const orders=[];
   ordersSnap.forEach(d=> orders.push(d.data()));
+  console.log('[Dash] orders fetched:', orders.length);
 
   // Outstanding docs in range
   const outSnap = await DB.collection('companies').doc(APP.companyId).collection('outstanding')
@@ -1651,7 +1651,11 @@ async function loadDashboardData(){
     }
   }
 
-  $('#dashKpis').innerHTML = `
+  const kpisEl = $('#dashKpis');
+  console.log('[Dash] #dashKpis element:', kpisEl ? 'FOUND' : 'NULL');
+  if(!kpisEl){ console.error('[Dash] #dashKpis not found — aborting render'); return; }
+
+  kpisEl.innerHTML = `
     <div class="kpi blue"><div class="label">Order Value</div><div class="value kpi-num" data-val="${totalOrderValue}">₹0</div><div class="sub">Qty: ${fmtNum(totalOrderQty)}</div></div>
     <div class="kpi green"><div class="label">Billing Value</div><div class="value kpi-num" data-val="${totalBilledValue}">₹0</div><div class="sub">Qty: ${fmtNum(totalBilledQty)}</div></div>
     <div class="kpi amber"><div class="label">Pending / Partial</div><div class="value">${pendingCount} / ${partialCount}</div><div class="sub">order(s)</div></div>
@@ -1660,7 +1664,7 @@ async function loadDashboardData(){
     <div class="kpi red"><div class="label">Current Outstanding</div><div class="value kpi-num" data-val="${latestOS}" data-empty="${latestOSDate?'':'1'}">₹0</div><div class="sub">${latestOSDate?fmtDateDisplay(latestOSDate):'No open date'}</div></div>
   `;
   // Count-up animation
-  $all('.kpi-num').forEach(el=>{
+  $all('#dashKpis .kpi-num').forEach(el=>{
     if(el.dataset.empty==='1'){ el.textContent='—'; return; }
     const target = Number(el.dataset.val)||0;
     if(target===0){ el.textContent=fmtINR(0); return; }

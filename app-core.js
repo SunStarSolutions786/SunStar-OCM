@@ -205,13 +205,8 @@ function setPageTitle(title){
   if(elT) elT.textContent = title;
 }
 
-/* Smooth content swap — renders immediately, fades in */
 function swapContent(renderFn){
-  const content = $('#pageContent');
-  if(!content){ renderFn(); return; }
   renderFn();
-  // Content is now in DOM — ensure it's visible (in case opacity was left at 0)
-  content.style.opacity='1';
 }
 
 /* ---------- Router ---------- */
